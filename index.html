@@ -2,12 +2,21 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <title>페르시아의 왕자 3D — 시간의 모래</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0610; font-family: 'Segoe UI', 'Malgun Gothic', sans-serif; }
-  canvas { display: block; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden; background: #0a0610;
+    font-family: 'Segoe UI', 'Malgun Gothic', sans-serif;
+    position: fixed; inset: 0;
+    touch-action: none; overscroll-behavior: none;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  canvas { display: block; touch-action: none; }
 
   #hud {
     position: fixed; top: 0; left: 0; right: 0; padding: 14px 18px;
@@ -118,6 +127,8 @@
   <button onclick="location.reload()">다시 도전</button>
 </div>
 
+<!-- 구버전 iOS Safari(16.4 미만)에서 importmap을 지원하기 위한 폴리필 -->
+<script async src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.js"></script>
 <script type="importmap">
 { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
 </script>
@@ -466,6 +477,18 @@ window.addEventListener('keydown', e => {
 });
 window.addEventListener('keyup', e => keys[e.code] = false);
 
+// iOS Safari 제스처(핀치 줌·더블탭 줌·당겨서 새로고침) 차단
+document.addEventListener('gesturestart', e => e.preventDefault());
+document.addEventListener('touchmove', e => {
+  if (!e.target.closest('.overlay')) e.preventDefault();
+}, { passive: false });
+let lastTap = 0;
+document.addEventListener('touchend', e => {
+  const now = Date.now();
+  if (now - lastTap < 350 && !e.target.closest('.overlay')) e.preventDefault();
+  lastTap = now;
+}, { passive: false });
+
 // 터치
 const touch = { active: false, mx: 0, mz: 0, jump: false, rewind: false };
 if ('ontouchstart' in window) {
@@ -492,10 +515,12 @@ if ('ontouchstart' in window) {
   };
   stick.addEventListener('touchend', endStick); stick.addEventListener('touchcancel', endStick);
   const bj = document.getElementById('btnJump'), br = document.getElementById('btnRewind');
-  bj.addEventListener('touchstart', e => { e.preventDefault(); touch.jump = true; });
+  bj.addEventListener('touchstart', e => { e.preventDefault(); touch.jump = true; }, { passive: false });
   bj.addEventListener('touchend', () => touch.jump = false);
-  br.addEventListener('touchstart', e => { e.preventDefault(); touch.rewind = true; });
+  bj.addEventListener('touchcancel', () => touch.jump = false);
+  br.addEventListener('touchstart', e => { e.preventDefault(); touch.rewind = true; }, { passive: false });
   br.addEventListener('touchend', () => touch.rewind = false);
+  br.addEventListener('touchcancel', () => touch.rewind = false);
 }
 
 /* ============================== 사운드 (WebAudio) ============================== */
@@ -822,6 +847,7 @@ loop();
 document.getElementById('startBtn').addEventListener('click', () => {
   document.getElementById('titleOverlay').style.display = 'none';
   if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+  if (actx.state === 'suspended') actx.resume(); // iOS는 사용자 제스처 후 resume 필요
   started = true;
   showMsg('황금 문을 향해 나아가세요!', 3);
 });
