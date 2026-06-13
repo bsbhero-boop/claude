@@ -123,6 +123,13 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
   background: #dcfce7; color: #15803d; font-size: 12px; font-weight: 800;
   padding: 4px 10px; border-radius: 999px;
 }
+.menu-step {
+  position: absolute; top: 16px; left: 16px;
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--navy); color: #fff; font-size: 14px; font-weight: 800;
+  display: flex; align-items: center; justify-content: center;
+}
+.menu-card { padding-left: 54px; }
 
 /* ========================================================
  * 3D 시뮬레이션 화면
@@ -212,7 +219,17 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 .dot-done { background: var(--green); }
 .dot-now { background: var(--blue); transform: scale(1.45); }
 
-.check-grid { display: grid; gap: 7px; margin-top: 12px; }
+.branch-note {
+  margin-top: 10px; background: #eef4ff; border: 1.5px dashed #b9ccef; color: #2b4a82;
+  border-radius: 10px; padding: 10px 13px; font-size: 13.5px; font-weight: 600; line-height: 1.5;
+}
+.check-label { margin-top: 14px; font-size: 13px; font-weight: 700; color: var(--navy); }
+.check-hint {
+  margin-top: 12px; font-size: 13px; font-weight: 700; color: var(--muted);
+  text-align: center; line-height: 1.5;
+}
+.check-hint-ok { color: var(--green); }
+.check-grid { display: grid; gap: 7px; margin-top: 8px; }
 .check-item {
   display: flex; align-items: center; gap: 10px; background: #f0f7ff;
   border: 1.5px solid #d8e7fa; border-radius: 10px; padding: 10px 12px;
@@ -335,6 +352,69 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 .quiz-result { text-align: center; }
 .quiz-result h3 { margin: 8px 0 10px; }
 .quiz-result p { color: var(--muted); margin-bottom: 16px; }
+
+/* ========================================================
+ * 실전 상황 대처 (시나리오)
+ * ====================================================== */
+.scn-intro { text-align: center; }
+.scn-intro h3 { color: var(--navy); margin: 6px 0 10px; }
+.scn-intro p { color: var(--muted); font-size: 14.5px; line-height: 1.65; margin-bottom: 16px; }
+.scn-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.scn-stage {
+  background: #eef2ff; color: var(--blue-dark); font-size: 12.5px; font-weight: 800;
+  padding: 5px 12px; border-radius: 999px;
+}
+.scn-situation {
+  background: #f8fafc; border-left: 4px solid var(--navy); border-radius: 10px;
+  padding: 14px 15px; font-size: 15px; line-height: 1.6; color: var(--text); margin-bottom: 12px;
+}
+.scn-q { font-size: 16px; font-weight: 800; color: var(--navy); margin-bottom: 12px; }
+.scn-verdict { font-size: 15.5px; font-weight: 800; margin-bottom: 6px; }
+.scn-correct {
+  margin-top: 10px; background: #ecfdf5; border: 1px solid #bbf7d0; color: #166534;
+  border-radius: 10px; padding: 10px 12px; font-size: 13.5px; line-height: 1.55;
+}
+.scn-rule {
+  margin-top: 10px; font-size: 12.5px; font-weight: 800; color: var(--muted);
+  border-top: 1px dashed var(--line); padding-top: 10px;
+}
+
+/* ========================================================
+ * 서비스 제공 기록지
+ * ====================================================== */
+#screen-record { padding: 22px 18px calc(34px + var(--safe-bottom)); }
+.record-card { background: #fff; border-radius: var(--radius); padding: 22px 20px; box-shadow: var(--shadow); }
+.record-intro { font-size: 14.5px; color: var(--muted); line-height: 1.65; margin-bottom: 14px; }
+.record-form { display: grid; gap: 12px; margin-top: 6px; }
+.record-field { display: grid; gap: 6px; }
+.record-flabel { font-size: 13.5px; font-weight: 800; color: var(--navy); }
+.record-flabel em { color: var(--red); font-style: normal; }
+.record-field input, .record-field textarea {
+  width: 100%; font-family: inherit; font-size: 15px; color: var(--text);
+  background: #f8fafc; border: 1.5px solid var(--line); border-radius: 10px; padding: 11px 13px;
+  resize: vertical;
+}
+.record-field input:focus, .record-field textarea:focus { outline: none; border-color: var(--blue); background: #fff; }
+.record-reminders {
+  margin-top: 16px; display: grid; gap: 6px; background: #fff7ed; border: 1.5px solid #fed7aa;
+  border-radius: 12px; padding: 12px 14px; font-size: 13px; font-weight: 600; color: #9a3412; line-height: 1.5;
+}
+.record-done { text-align: center; }
+.record-done h3 { color: var(--navy); margin: 8px 0 10px; }
+.record-done-sub { color: var(--muted); font-size: 14.5px; line-height: 1.65; margin-bottom: 16px; }
+.record-receipt {
+  text-align: left; background: #f8fafc; border: 1.5px dashed #b9c8da;
+  border-radius: 12px; padding: 14px 16px; margin-bottom: 16px;
+}
+.record-receipt-head { font-weight: 800; color: var(--navy); margin-bottom: 10px; font-size: 14.5px; }
+.record-row {
+  display: flex; gap: 10px; justify-content: space-between; align-items: baseline;
+  padding: 7px 0; border-top: 1px solid #eef2f7; font-size: 13.5px;
+}
+.record-row:first-of-type { border-top: none; }
+.record-row span { color: var(--muted); font-weight: 700; flex: none; max-width: 42%; }
+.record-row b { color: var(--text); text-align: right; line-height: 1.5; }
+.record-next { color: var(--muted); font-size: 13.5px; line-height: 1.6; margin-bottom: 14px; }
 
 /* ---------- 작은 화면 보정 ---------- */
 @media (max-width: 480px) {
