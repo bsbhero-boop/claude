@@ -36,6 +36,7 @@ async function ensureScene() {
     const { HospitalScene } = await import('./hospital.js');
     hospital = new HospitalScene($('#canvas3d'));
     hospital.onStationTap = (id) => openStationInfo(id);
+    window.__hospital = hospital; // 디버깅용
   } catch (err) {
     console.error('3D 씬 초기화 실패:', err);
     scene3dFailed = true;
