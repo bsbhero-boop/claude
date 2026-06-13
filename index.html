@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#1e3a5f" />
+  <title>병원동행 교육 시뮬레이션 — 퇴원환자 돌봄군 지원서비스</title>
+  <meta name="description" content="퇴원환자 돌봄군 지원서비스 병원동행인력을 위한 3D 교육 시뮬레이션 플랫폼. 병원 내 업무, 주의사항, 키오스크 사용법, 진료 동행 절차를 웹에서 직접 시연하고 학습합니다." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='80' font-size='80'>🏥</text></svg>" />
+  <link rel="stylesheet" href="css/style.css" />
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./vendor/three.module.min.js",
+      "three/addons/": "./vendor/"
+    }
+  }
+  </script>
+</head>
+<body>
+
+  <!-- ============ 시작화면 ============ -->
+  <section id="screen-start" class="screen active">
+    <div class="start-inner">
+      <div class="logo-row">
+        <!-- ※ 아래 로고는 임시 심볼입니다. 실제 배포 시 각 기관의 공식 로고 이미지로 교체하세요. -->
+        <div class="logo-item" title="보건복지부">
+          <svg viewBox="0 0 96 96" class="logo-svg" role="img" aria-label="보건복지부 로고 자리">
+            <circle cx="48" cy="48" r="44" fill="#fff" stroke="#0b4da2" stroke-width="3"/>
+            <path d="M30 60 Q48 22 66 60" fill="none" stroke="#0b4da2" stroke-width="7" stroke-linecap="round"/>
+            <path d="M34 64 Q48 40 62 64" fill="none" stroke="#1aa05a" stroke-width="7" stroke-linecap="round"/>
+            <circle cx="48" cy="30" r="6" fill="#e8443a"/>
+          </svg>
+          <span>보건복지부</span>
+        </div>
+        <div class="logo-item" title="노인맞춤돌봄서비스">
+          <svg viewBox="0 0 96 96" class="logo-svg" role="img" aria-label="노인맞춤돌봄서비스 로고 자리">
+            <circle cx="48" cy="48" r="44" fill="#fff" stroke="#f08300" stroke-width="3"/>
+            <path d="M48 70 C30 56 26 42 36 34 C43 29 48 36 48 40 C48 36 53 29 60 34 C70 42 66 56 48 70 Z" fill="#f08300"/>
+            <circle cx="48" cy="26" r="7" fill="#5b4632"/>
+          </svg>
+          <span>노인맞춤돌봄서비스</span>
+        </div>
+        <div class="logo-item" title="독거노인종합지원센터">
+          <svg viewBox="0 0 96 96" class="logo-svg" role="img" aria-label="독거노인종합지원센터 로고 자리">
+            <circle cx="48" cy="48" r="44" fill="#fff" stroke="#0e8a7d" stroke-width="3"/>
+            <path d="M28 50 L48 32 L68 50" fill="none" stroke="#0e8a7d" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+            <rect x="36" y="50" width="24" height="18" rx="3" fill="#0e8a7d"/>
+            <circle cx="48" cy="56" r="4" fill="#ffd166"/>
+          </svg>
+          <span>독거노인종합지원센터</span>
+        </div>
+      </div>
+
+      <p class="start-kicker">보건복지부 노인맞춤돌봄서비스 · 퇴원환자 돌봄군 지원서비스</p>
+      <h1 class="start-title">병원동행인력<br>교육 시뮬레이션</h1>
+      <p class="start-sub">3D 가상 병원에서 동행 업무와 주의사항, 키오스크 사용법,<br class="pc-only">진료 동행 절차를 직접 시연하며 학습합니다.</p>
+
+      <button id="btnStart" class="btn btn-start">교육 시작하기</button>
+
+      <p class="start-foot">※ 본 화면의 기관 로고는 임시 심볼이며, 배포 시 공식 로고로 교체가 필요합니다.</p>
+    </div>
+  </section>
+
+  <!-- ============ 메인 메뉴 ============ -->
+  <section id="screen-menu" class="screen">
+    <header class="menu-head">
+      <button id="btnMenuHome" class="icon-btn" aria-label="시작화면으로">🏠</button>
+      <div>
+        <h2>학습 메뉴</h2>
+        <p>권장 순서대로 <b>1 → 5</b> 학습하면 실제 동행 과정을 자연스럽게 익힐 수 있습니다. 완료한 과정에는 ✓ 표시가 생깁니다.</p>
+      </div>
+    </header>
+    <div class="menu-grid">
+      <button class="menu-card" data-module="explore">
+        <span class="menu-step">1</span>
+        <span class="done-badge">✓ 완료</span>
+        <span class="menu-icon">🏥</span>
+        <h3>병원 둘러보기</h3>
+        <p>3D 병원의 8개 장소를 탐색하며 장소별 <b>업무</b>와 <b>주의사항</b>을 익힙니다.</p>
+      </button>
+      <button class="menu-card" data-module="procedure">
+        <span class="menu-step">2</span>
+        <span class="done-badge">✓ 완료</span>
+        <span class="menu-icon">🚶</span>
+        <h3>진료 동행 절차 시뮬레이션</h3>
+        <p>만남부터 귀가까지 <b>9단계 절차</b>를 따라가며 단계별 체크리스트와 <b>서비스 기록지</b>까지 직접 완성합니다.</p>
+      </button>
+      <button class="menu-card" data-module="kiosk">
+        <span class="menu-step">3</span>
+        <span class="done-badge">✓ 완료</span>
+        <span class="menu-icon">🖥️</span>
+        <h3>키오스크 사용 실습</h3>
+        <p>접수·수납·증명서 발급을 <b>실제 화면처럼 터치</b>하며 연습합니다.</p>
+      </button>
+      <button class="menu-card" data-module="scenario">
+        <span class="menu-step">4</span>
+        <span class="done-badge">✓ 완료</span>
+        <span class="menu-icon">🧭</span>
+        <h3>실전 상황 대처</h3>
+        <p>동행 중 마주치는 <b>12가지 실제 상황</b>에서 직접 판단하며 올바른 대응을 익힙니다.</p>
+      </button>
+      <button class="menu-card" data-module="quiz">
+        <span class="menu-step">5</span>
+        <span class="done-badge">✓ 완료</span>
+        <span class="menu-icon">✅</span>
+        <h3>핵심 수칙 · 학습 점검</h3>
+        <p>8가지 핵심 수칙을 확인하고 <b>퀴즈</b>로 학습 내용을 마무리 점검합니다.</p>
+      </button>
+    </div>
+  </section>
+
+  <!-- ============ 3D 시뮬레이션 (탐색/절차 공용) ============ -->
+  <section id="screen-sim" class="screen">
+    <canvas id="canvas3d"></canvas>
+    <div id="webglFallback" class="webgl-fallback">
+      <p>⚠️ 이 기기에서는 3D 화면을 표시할 수 없습니다.<br>아래 장소 버튼을 눌러 내용을 학습해 주세요.</p>
+    </div>
+    <header class="sim-head">
+      <button id="btnSimBack" class="icon-btn" aria-label="메뉴로">←</button>
+      <h2 id="simTitle">병원 둘러보기</h2>
+    </header>
+    <p id="exploreHint" class="explore-hint">👆 화면을 드래그해 둘러보고, 빛나는 <b>파란 원</b>이나 아래 버튼을 눌러 학습하세요</p>
+    <div id="stationChips" class="chips"></div>
+    <div id="infoPanel" class="bottom-panel"></div>
+    <div id="procPanel" class="bottom-panel"></div>
+  </section>
+
+  <!-- ============ 키오스크 오버레이 ============ -->
+  <div id="kioskOverlay" class="kiosk-overlay">
+    <div class="kiosk-frame">
+      <div class="kiosk-frame-head">
+        <span>🖥️ 키오스크 실습</span>
+        <button id="btnKioskClose" class="icon-btn" aria-label="닫기">✕</button>
+      </div>
+      <div id="kioskTip" class="kiosk-tip"></div>
+      <div id="kioskScreen" class="kiosk-screen"></div>
+    </div>
+  </div>
+
+  <!-- ============ 실전 상황 대처 ============ -->
+  <section id="screen-scenario" class="screen">
+    <header class="menu-head">
+      <button id="btnScnBack" class="icon-btn" aria-label="메뉴로">←</button>
+      <div>
+        <h2>실전 상황 대처</h2>
+        <p>동행 중 실제로 마주치는 상황입니다. 가장 올바른 대응을 직접 선택해 보세요.</p>
+      </div>
+    </header>
+    <div class="learn-body">
+      <div id="scnArea" class="quiz-area"></div>
+    </div>
+  </section>
+
+  <!-- ============ 서비스 제공 기록지 ============ -->
+  <section id="screen-record" class="screen">
+    <header class="menu-head">
+      <button id="btnRecordBack" class="icon-btn" aria-label="메뉴로">←</button>
+      <div>
+        <h2>서비스 제공 기록지 작성</h2>
+        <p>동행을 마친 뒤 작성하는 실제 산출물입니다.</p>
+      </div>
+    </header>
+    <div class="learn-body">
+      <div id="recordArea"></div>
+    </div>
+  </section>
+
+  <!-- ============ 핵심 수칙 · 퀴즈 ============ -->
+  <section id="screen-learn" class="screen">
+    <header class="menu-head">
+      <button id="btnLearnBack" class="icon-btn" aria-label="메뉴로">←</button>
+      <div>
+        <h2>핵심 수칙 · 학습 점검</h2>
+        <p>병원동행인력이 반드시 지켜야 할 8가지 수칙입니다.</p>
+      </div>
+    </header>
+    <div class="learn-body">
+      <div id="rulesGrid" class="rules-grid"></div>
+      <div id="quizArea" class="quiz-area"></div>
+    </div>
+  </section>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
