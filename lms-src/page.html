@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>배움터 직무교육 통계 · 노인맞춤돌봄서비스</title>
+<style>/*__CSS__*/</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <h1>배움터 직무교육 통계 대시보드</h1>
+    <div class="sub">노인맞춤돌봄서비스 종사자 직무교육 · 원데이터 업로드 → 자동 집계 (모든 처리는 브라우저 로컬에서만 수행, 외부 전송 없음)</div>
+    <div class="statusbar" id="statusbar"></div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="uploads">
+    <div class="drop" id="dropMember">
+      <h3>① 회원정보</h3>
+      <p>ID·직군·신규/경력·교육대상여부가 담긴 회원정보 엑셀. 한 번 올리면 저장되어 다음엔 갱신 시에만 올리면 됩니다.</p>
+      <div class="row">
+        <button class="btn" id="btnMember">파일 선택</button>
+        <span class="hint">.xlsx / .xls / .csv · 여기로 끌어다 놓기 가능</span>
+      </div>
+      <input type="file" id="fileMember" accept=".xlsx,.xls,.csv" multiple style="display:none">
+    </div>
+    <div class="drop" id="dropStudent">
+      <h3>② 수강생목록 (원데이터)</h3>
+      <p>온라인통합수강생목록 파일. 여러 개를 한꺼번에 올려도 됩니다. 올릴 때마다 자동 집계됩니다.</p>
+      <div class="row">
+        <button class="btn" id="btnStudent">파일 선택</button>
+        <span class="hint">.xls / .xlsx / .csv · 수십만 줄 가능 (파싱에 다소 시간 소요)</span>
+      </div>
+      <input type="file" id="fileStudent" accept=".xlsx,.xls,.csv" multiple style="display:none">
+    </div>
+  </div>
+
+  <div class="tabs" id="tabs"></div>
+  <div id="content"></div>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="spin">
+    <div class="ring"></div>
+    <div class="msg">처리 중...</div>
+    <div class="sub"></div>
+    <div class="prog"><span></span></div>
+  </div>
+</div>
+
+<script type="text/plain" id="xlsx-b64">/*__XLSX_B64__*/</script>
+<script>
+/* SheetJS 부트스트랩: base64 → 원본 바이트 → Blob URL 스크립트 로드.
+   외부 네트워크 요청 없음(blob:). 원본 파일과 동일 바이트로 로드되어 인코딩 손상 없음. */
+(function(){
+  try{
+    var b64=document.getElementById('xlsx-b64').textContent.trim();
+    var bin=atob(b64),bytes=new Uint8Array(bin.length);for(var i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+    var url=URL.createObjectURL(new Blob([bytes],{type:'text/javascript'}));
+    var s=document.createElement('script');
+    s.onload=function(){window.__XLSX_READY=true;document.dispatchEvent(new Event('xlsx-ready'));};
+    s.onerror=function(){window.__XLSX_ERR=true;console.error('SheetJS 로드 실패');};
+    s.src=url;document.head.appendChild(s);
+  }catch(e){window.__XLSX_ERR=true;console.error('SheetJS 부트스트랩 오류',e);}
+})();
+</script>
+<script>/*__COMPUTE__*/</script>
+<script>/*__APP__*/</script>
+</body>
+</html>
