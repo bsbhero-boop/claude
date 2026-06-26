@@ -87,6 +87,7 @@
         .then(function (buf) { return tick().then(function () { all = all.concat(parseWorkbook(buf, MCOLS)); }); });
     });
     return chain.then(function () {
+      if (all.length && !('교육대상여부' in all[0]) && !('교육구분' in all[0])) { hideOv(); alert('이 파일은 회원정보가 아닌 것 같습니다.\n‘교육대상여부/교육구분’ 열을 찾지 못했습니다. 올바른 회원정보 파일인지 확인해 주세요.'); }
       state.members = all;
       state.memberMeta = { count: all.length, filename: files.map(function (f) { return f.name; }).join(', '), loadedAt: new Date().toISOString() };
       setOv('회원정보 저장 중...', '', 90);
@@ -112,7 +113,10 @@
           });
         });
     });
-    return chain.then(function () { setOv('통계 집계 중...', state.students.length.toLocaleString() + '행', 92); return tick(); })
+    return chain.then(function () {
+      if (state.students.length && !('과정명' in state.students[0])) { hideOv(); alert('이 파일은 수강생목록(온라인통합수강생목록)이 아닌 것 같습니다.\n‘과정명’ 열을 찾지 못했습니다. 올바른 원데이터 파일인지 확인해 주세요.'); }
+      setOv('통계 집계 중...', state.students.length.toLocaleString() + '행', 92); return tick();
+    })
       .then(function () { renderStatus(); return recompute(); }).then(hideOv)
       .catch(function (e) { hideOv(); alert('수강생목록 읽기 오류: ' + e.message); });
   }
