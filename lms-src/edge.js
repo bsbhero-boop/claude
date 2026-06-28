@@ -32,7 +32,7 @@ function wire(page, errs) {
     await p.setInputFiles('#fileMember', MEMBER);
     await p.waitForFunction(() => window.__LMS_APP && window.__LMS_APP.result, null, { timeout: 60000 });
     const k = await p.evaluate(() => window.__LMS_APP.result.kpi);
-    const ok = k.대상자 === 36757 && k.이수자 === 16496;
+    const ok = k.대상자 === 36424 && k.이수자 === 16374;
     console.log('CASE1 회원정보 추가 후: 대상자', k.대상자, '이수자', k.이수자, ok ? '✅' : '❌', '| dialog/err:', errs.length);
     if (!ok || errs.length) { pass = false; console.log('  errs:', errs.slice(0, 3)); }
     await b.close();

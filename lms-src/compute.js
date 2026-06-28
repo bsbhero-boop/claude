@@ -20,11 +20,16 @@
     '선임생활지원사 직무 및 역할': 3, '사례관리 이해와 실제': 2, '관계형성 및 조직관리': 2
   };
 
+  // 통계 대상 시도(16개). 이 목록 외(중앙·미상 등)는 모든 통계에서 제외.
+  var DEFAULT_SIDO = ['서울', '경기', '인천', '부산', '대전', '대구', '울산', '광주', '강원', '경남', '경북', '전남', '전북', '충남', '충북', '제주'];
+
   var DEFAULT_CONFIG = {
     // 학생 데이터에서 제외할 상태값
     excludeStudentStatus: ['수강취소'],
     // 모수(교육대상자) 필터: 회원정보에서 이 조건을 만족하는 사람만 대상자로 집계
     universeFilter: { '교육대상여부': 'Y', '상태': '정상' },
+    // 통계 대상 시도. 회원정보 시도가 이 목록에 없으면(중앙·미상 등) 모든 통계에서 제외.
+    allowedSido: DEFAULT_SIDO.slice(),
     // 경력자 선택교육 이수 기준(차시). 직군(정규화) 기준.
     thresholds: { '생활지원사': 13, '전담사회복지사': 10 },
     chasi: DEFAULT_CHASI,
@@ -72,6 +77,13 @@
     var chasi = cfg.chasi || DEFAULT_CHASI;
     var excl = {}; (cfg.excludeStudentStatus || []).forEach(function (s) { excl[s] = 1; });
 
+    // 시도 필터: 회원정보 ID→시도 매핑 후, 허용 시도(16개) 밖이면 모든 통계에서 제외
+    var allowed = (cfg.allowedSido && cfg.allowedSido.length) ? new Set(cfg.allowedSido.map(S)) : null;
+    var memberSido = new Map();
+    for (var msi = 0; msi < memberRows.length; msi++) { memberSido.set(S(memberRows[msi]['ID']), S(memberRows[msi]['시도'])); }
+    function regionOK(id) { return !allowed || allowed.has(memberSido.get(id)); }
+    var skippedRegion = 0;
+
     // ---- 1) 학생 데이터 1-pass 집계 -------------------------------------
     // perID: { pil:Set("경력|직군"), sel:Set(subject), selRetake, examNoShow:[], subjAny:Set, subjDone:Set }
     var perID = new Map();
@@ -91,6 +103,7 @@
       if (excl[status]) { skippedCancel++; continue; }
       var id = S(r['ID']);
       if (!id) continue;
+      if (!regionOK(id)) { skippedRegion++; continue; } // 16개 시도 외(중앙·미상) 제외
       var cat = S(r['카테고리']);
       var name = S(r['과정명']);
       var done = isDone(r);
@@ -122,14 +135,16 @@
     // ---- 2) 모수(교육대상자) 결정 + 1인 1행 이수 판정 -------------------
     var uf = cfg.universeFilter || {};
     var ufKeys = Object.keys(uf);
-    function inUniverse(m) { for (var k = 0; k < ufKeys.length; k++) { if (S(m[ufKeys[k]]) !== S(uf[ufKeys[k]])) return false; } return true; }
+    function passBase(m) { for (var k = 0; k < ufKeys.length; k++) { if (S(m[ufKeys[k]]) !== S(uf[ufKeys[k]])) return false; } return true; }
 
     var persons = [];           // 대상자별 판정 결과
     var notFoundInStudent = 0;  // 대상자인데 수강기록 전혀 없음
+    var regionExcluded = 0;     // 교육대상이나 시도가 16개 외라서 제외된 인원
 
     for (var j = 0; j < memberRows.length; j++) {
       var m = memberRows[j];
-      if (!inUniverse(m)) continue;
+      if (!passBase(m)) continue;
+      if (allowed && !allowed.has(S(m['시도']))) { regionExcluded++; continue; } // 16개 시도 외 제외
       var mid = S(m['ID']);
       var ut = S(m['사용자유형']);
       var dir = normDirect(ut);
@@ -223,7 +238,7 @@
         if (e.카테고리 === '직무교육(필수)') { var pm2 = pilMeta(e.과정명); subjectDone = o.pil.has(pm2.경력 + '|' + pm2.직군); }
         var per = personByID.get(id) || {};
         examNoShowRows.push({
-          ID: id, 성명: e.성명 || per.성명 || '', 기관명: e.기관명 || per.기관명 || '', 시도: e.시도 || per.시도 || '',
+          ID: id, 성명: e.성명 || per.성명 || '', 기관명: e.기관명 || per.기관명 || '', 시도: per.시도 || memberSido.get(id) || e.시도 || '',
           시군구: e.시군구 || per.시군구 || '', 카테고리: e.카테고리, 과정명: e.과정명, 진도율: e.진도율, 점수: e.점수,
           해당과목완료: subjectDone, 전체이수: !!per.이수, 직군: per.직군 || '', 경력: per.경력 || '',
           재응시필요: !subjectDone
@@ -246,7 +261,8 @@
       미응시연인원: examNoShowRows.length,
       재응시필요인원: examNoShowRows.filter(function (e) { return e.재응시필요; }).length,
       수강취소제외: skippedCancel,
-      대상자중수강기록없음: notFoundInStudent
+      대상자중수강기록없음: notFoundInStudent,
+      지역외제외: regionExcluded
     };
 
     return {

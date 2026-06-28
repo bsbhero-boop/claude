@@ -32,11 +32,17 @@ const STUDENTS = ['4ecf5ad8-__________20260626.____2.xls', '186cd960-__________2
   console.log('\n=== KPI (browser) ===');
   console.log(JSON.stringify(kpi, null, 2));
 
-  // 검증
-  const expect = { 대상자: 36757, 이수자: 16496, 기준미정의대상: 677 };
+  // 검증 (16개 시도 필터 적용 후)
+  const expect = { 대상자: 36424, 이수자: 16374, 기준미정의대상: 659, 지역외제외: 351 };
   let ok = true;
   for (const k in expect) { if (kpi[k] !== expect[k]) { ok = false; console.log('MISMATCH', k, 'got', kpi[k], 'want', expect[k]); } }
-  console.log('이수율:', kpi.이수율.toFixed(4) + '% (기대 44.8785%)');
+  console.log('이수율:', kpi.이수율.toFixed(4) + '% (기대 44.9539%)');
+  // 시도별에 16개 외(미상/중앙)가 없는지 확인
+  const sidoKeys = await page.evaluate(() => window.__LMS_APP.result.bySido.map(r => r.key));
+  const SIDO16 = ['서울','경기','인천','부산','대전','대구','울산','광주','강원','경남','경북','전남','전북','충남','충북','제주'];
+  const badSido = sidoKeys.filter(k => !SIDO16.includes(k));
+  console.log('시도별 키:', sidoKeys.length, '개 | 16개 외 잔존:', badSido.length, badSido.length === 0 ? '✅' : ('❌ ' + JSON.stringify(badSido)));
+  if (badSido.length) ok = false;
 
   // 탭 클릭 점검
   for (const label of ['이수율 현황', '미이수자 명단', '미응시·재응시', '과목별 현황', '개인 조회', '설정·도움말', '요약']) {

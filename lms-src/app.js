@@ -223,10 +223,11 @@
     c.appendChild(kp);
 
     var note = el('div', { class: 'note info' });
-    note.innerHTML = '집계 기준: 교육대상여부 <b>Y</b> · 회원상태 <b>정상</b>인 <b>생활지원사·전담사회복지사</b> 대상. ' +
+    note.innerHTML = '집계 기준: <b>16개 시도</b>(중앙·미상 제외) · 교육대상여부 <b>Y</b> · 회원상태 <b>정상</b>인 <b>생활지원사·전담사회복지사</b> 대상. ' +
       '신규자=필수 수료 / 경력자=필수 수료+선택 차시(생활 13·전담 10) 충족 시 <b>이수</b>. 수강취소 ' + fmt(k.수강취소제외) + '건 제외. ' +
       (k.기준미정의대상 ? '이수기준 미정의(중간관리자/기타 등) ' + fmt(k.기준미정의대상) + '명은 별도(설정·도움말 참고).' : '');
     c.appendChild(note);
+    if (k.지역외제외) { var nr = el('div', { class: 'note' }); nr.innerHTML = '16개 시도 외(중앙·미상 등)라서 통계에서 제외된 교육대상 인원: <b>' + fmt(k.지역외제외) + '명</b> (대상 시도는 설정에서 변경 가능).'; c.appendChild(nr); }
     if (k.대상자중수강기록없음) {
       var n2 = el('div', { class: 'note' }); n2.innerHTML = '교육대상자 중 수강 기록이 전혀 없는 인원: <b>' + fmt(k.대상자중수강기록없음) + '명</b> (전원 미이수로 집계됨 — 미수강 독려 대상).'; c.appendChild(n2);
     }
@@ -481,6 +482,12 @@
     var i1 = el('input', { type: 'number', value: ens.progressGte, style: 'width:90px' }); i1.onchange = function () { ens.progressGte = parseFloat(i1.value) || 0; saveAndRecompute(); }; l1.appendChild(i1); box1.appendChild(l1);
     var l2 = el('label', { class: 'fld', style: 'display:inline-flex' }, '점수 ≤');
     var i2 = el('input', { type: 'number', value: ens.scoreLte, style: 'width:90px' }); i2.onchange = function () { ens.scoreLte = parseFloat(i2.value) || 0; saveAndRecompute(); }; l2.appendChild(i2); box1.appendChild(l2);
+    // 대상 시도
+    box1.appendChild(el('h3', { style: 'font-size:13px;margin:16px 0 8px' }, '통계 대상 시도 (이 목록 외는 제외)'));
+    box1.appendChild(el('p', { class: 'hint', style: 'margin:0 0 6px' }, '쉼표(,)로 구분. 중앙·미상 등 목록에 없는 시도는 모든 통계에서 제외됩니다.'));
+    var sidoInp = el('input', { type: 'text', value: (state.config.allowedSido || []).join(', '), style: 'width:100%' });
+    sidoInp.onchange = function () { state.config.allowedSido = sidoInp.value.split(',').map(function (s) { return s.trim(); }).filter(Boolean); saveAndRecompute(); };
+    box1.appendChild(sidoInp);
     grid.appendChild(box1);
     // chasi map
     var box2 = el('div');
