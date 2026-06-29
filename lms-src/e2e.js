@@ -45,7 +45,13 @@ const STUDENTS = ['4ecf5ad8-__________20260626.____2.xls', '186cd960-__________2
   if (badSido.length) ok = false;
 
   // 탭 클릭 점검
-  for (const label of ['이수율 현황', '미이수자 명단', '미응시·재응시', '보류·직군변경', '과목별 현황', '개인 조회', '설정·도움말', '요약']) {
+  // 데이터 현황(연도/차수) 검증
+  const cov = await page.evaluate(() => window.__LMS_APP.coverage && window.__LMS_APP.coverage.summary);
+  console.log('데이터 현황: 연도', cov && cov.연도, '최신차수', cov && cov.최신차수, '신청일', (cov && cov.최초신청일) + '~' + (cov && cov.최근신청일),
+    (cov && cov.최신차수 === 14 && cov.연도.join() === '2026' && cov.최근신청일 === '2026-06-26') ? '✅' : '❌');
+  if (!(cov && cov.최신차수 === 14 && cov.연도.join() === '2026' && cov.최근신청일 === '2026-06-26')) ok = false;
+
+  for (const label of ['데이터 현황', '이수율 현황', '미이수자 명단', '미응시·재응시', '보류·직군변경', '과목별 현황', '개인 조회', '설정·도움말', '요약']) {
     await page.click(`button.tab:has-text("${label}")`);
     await page.waitForTimeout(120);
     const cells = await page.$$eval('#content table tbody tr', rs => rs.length).catch(() => 0);

@@ -311,7 +311,47 @@
     };
   }
 
-  var API = { analyze: analyze, DEFAULT_CONFIG: DEFAULT_CONFIG, DEFAULT_CHASI: DEFAULT_CHASI, normDirect: normDirect, selBase: selBase, pilMeta: pilMeta };
+  /* ---- 데이터 업데이트 현황(연도/차수 기준) -------------------------------
+   * 원데이터(수강목록) 전체를 대상으로 어디까지 들어왔는지 집계.
+   * 통계 필터(시도·취소)와 무관하게 '업로드된 데이터의 범위'를 보여줌. */
+  function coverage(studentRows) {
+    function parseYC(v) { v = S(v); if (v.indexOf('/') < 0) return null; var p = v.split('/'); var y = S(p[0]); var r = parseInt(S(p[1]), 10); if (!y || isNaN(r)) return null; return { 연도: y, 차수: r }; }
+    var yrMap = new Map();      // "연도|차수" -> {연도,차수,건수,최초신청일,최근신청일}
+    var courseMap = new Map();  // 과정명 -> {카테고리,연도,차수set,최신차수,건수,최근신청일,최근수료일}
+    var minApply = '', maxApply = '', maxDone = '', maxRound = 0, years = {};
+    for (var i = 0; i < studentRows.length; i++) {
+      var r = studentRows[i];
+      var yc = parseYC(r['연도/차수']);
+      var apply = S(r['교육신청일']), done = S(r['수료일']);
+      if (apply) { if (!minApply || apply < minApply) minApply = apply; if (apply > maxApply) maxApply = apply; }
+      if (done && done > maxDone) maxDone = done;
+      if (!yc) continue;
+      years[yc.연도] = 1; if (yc.차수 > maxRound) maxRound = yc.차수;
+      var yk = yc.연도 + '|' + yc.차수;
+      var ye = yrMap.get(yk);
+      if (!ye) { ye = { 연도: yc.연도, 차수: yc.차수, 건수: 0, 최초신청일: '', 최근신청일: '' }; yrMap.set(yk, ye); }
+      ye.건수++; if (apply) { if (!ye.최초신청일 || apply < ye.최초신청일) ye.최초신청일 = apply; if (apply > ye.최근신청일) ye.최근신청일 = apply; }
+      var nm = S(r['과정명']);
+      var ce = courseMap.get(nm);
+      if (!ce) { ce = { 과정명: nm, 카테고리: S(r['카테고리']), 연도: yc.연도, _set: {}, 최신차수: 0, 건수: 0, 최근신청일: '', 최근수료일: '' }; courseMap.set(nm, ce); }
+      ce._set[yc.차수] = 1; if (yc.차수 > ce.최신차수) ce.최신차수 = yc.차수; ce.건수++;
+      if (apply > ce.최근신청일) ce.최근신청일 = apply; if (done > ce.최근수료일) ce.최근수료일 = done;
+    }
+    var byYearRound = []; yrMap.forEach(function (v) { byYearRound.push(v); });
+    byYearRound.sort(function (a, b) { return a.연도 === b.연도 ? a.차수 - b.차수 : (a.연도 < b.연도 ? -1 : 1); });
+    var byCourse = []; courseMap.forEach(function (v) { var ks = Object.keys(v._set).map(Number).sort(function (a, b) { return a - b; }); v.보유차수 = compactRanges(ks); v.차수수 = ks.length; delete v._set; byCourse.push(v); });
+    byCourse.sort(function (a, b) { return b.건수 - a.건수; });
+    return { byYearRound: byYearRound, byCourse: byCourse, summary: { 연도: Object.keys(years).sort(), 최신차수: maxRound, 행수: studentRows.length, 최초신청일: minApply, 최근신청일: maxApply, 최근수료일: maxDone } };
+  }
+  // 연속 차수를 "1~6, 9, 11~13" 형태로 압축
+  function compactRanges(arr) {
+    if (!arr.length) return '';
+    var out = [], s = arr[0], p = arr[0];
+    for (var i = 1; i < arr.length; i++) { if (arr[i] === p + 1) { p = arr[i]; continue; } out.push(s === p ? '' + s : s + '~' + p); s = p = arr[i]; }
+    out.push(s === p ? '' + s : s + '~' + p); return out.join(', ');
+  }
+
+  var API = { analyze: analyze, coverage: coverage, DEFAULT_CONFIG: DEFAULT_CONFIG, DEFAULT_CHASI: DEFAULT_CHASI, normDirect: normDirect, selBase: selBase, pilMeta: pilMeta };
   if (typeof module !== 'undefined' && module.exports) module.exports = API;
   root.LMS = API;
 })(typeof window !== 'undefined' ? window : this);

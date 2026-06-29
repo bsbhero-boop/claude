@@ -12,13 +12,13 @@
   var tick = function () { return new Promise(function (r) { setTimeout(r, 0); }); };
 
   // 필요한 학생 컬럼만 보관(메모리 절약)
-  var SCOLS = ['카테고리', '과정명', '교육차시', '진도율', '점수', '수료여부', '수료일', '상태', 'ID', '성명', '기관코드', '기관명', '시도', '시군구', '사용자유형', '자격번호', '연도/차수'];
+  var SCOLS = ['카테고리', '과정명', '교육차시', '교육신청일', '진도율', '점수', '수료여부', '수료일', '상태', 'ID', '성명', '기관코드', '기관명', '시도', '시군구', '사용자유형', '자격번호', '연도/차수'];
   var MCOLS = ['No', '시도', '시군구', '읍면동', '기관코드', '기관명', '성명', 'ID', '사용자유형', '권한관리자', '일반', '중점', '특화', '퇴원', '고도화', '선임여부', '교육대상여부', '교육구분', '상태'];
 
   var state = {
     members: null, memberMeta: null,
     students: [], studentFiles: [],
-    studentByID: null, result: null,
+    studentByID: null, result: null, coverage: null,
     config: JSON.parse(JSON.stringify(LMS.DEFAULT_CONFIG)),
     decisions: {}, // 직군변경 보류 검토 결정 { ID: 'approve'|'reject' }
     activeTab: 'summary'
@@ -116,6 +116,7 @@
     });
     return chain.then(function () {
       if (state.students.length && !('과정명' in state.students[0])) { hideOv(); alert('이 파일은 수강생목록(온라인통합수강생목록)이 아닌 것 같습니다.\n‘과정명’ 열을 찾지 못했습니다. 올바른 원데이터 파일인지 확인해 주세요.'); }
+      state.coverage = state.students.length ? LMS.coverage(state.students) : null;
       setOv('통계 집계 중...', state.students.length.toLocaleString() + '행', 92); return tick();
     })
       .then(function () { renderStatus(); return recompute(); }).then(hideOv)
@@ -144,6 +145,7 @@
     } else sb.appendChild(el('div', { class: 'stat empty' }, '회원정보 미등록'));
     if (state.studentFiles.length) {
       sb.appendChild(el('div', { class: 'stat' })).innerHTML = '수강데이터 <b>' + fmt(state.students.length) + '행</b> · ' + state.studentFiles.length + '개 파일';
+      if (state.coverage) sb.appendChild(el('div', { class: 'stat' })).innerHTML = '데이터 ' + (state.coverage.summary.연도.join('·') || '') + '년 <b>최신 ' + state.coverage.summary.최신차수 + '차</b>';
     } else sb.appendChild(el('div', { class: 'stat empty' }, '수강데이터 미등록'));
     if (state.result) sb.appendChild(el('div', { class: 'stat' })).innerHTML = '전체 이수율 <b>' + pct(state.result.kpi.이수율) + '</b>';
   }
@@ -187,7 +189,7 @@
 
   /* ---------- 탭 렌더 ------------------------------------------------- */
   var TABS = [
-    ['summary', '요약'], ['rates', '이수율 현황'], ['notdone', '미이수자 명단'],
+    ['summary', '요약'], ['coverage', '데이터 현황'], ['rates', '이수율 현황'], ['notdone', '미이수자 명단'],
     ['noexam', '미응시·재응시'], ['pending', '보류·직군변경'], ['courses', '과목별 현황'], ['person', '개인 조회'], ['settings', '설정·도움말']
   ];
   function renderTabsBar() {
@@ -199,6 +201,7 @@
     var c = $('#content'); c.innerHTML = '';
     if (state.activeTab === 'settings') return renderSettings(c);
     if (state.activeTab === 'person') return renderPerson(c);
+    if (state.activeTab === 'coverage') return renderCoverage(c);
     if (!state.result) { c.appendChild(emptyState()); return; }
     if (state.activeTab === 'summary') return renderSummary(c);
     if (state.activeTab === 'rates') return renderRates(c);
@@ -484,6 +487,79 @@
     apply();
   }
 
+  function renderCoverage(c) {
+    if (!state.students.length) {
+      var card0 = el('div', { class: 'card' });
+      card0.appendChild(el('h2', {}, '데이터 업데이트 현황'));
+      card0.appendChild(el('div', { class: 'muted', style: 'padding:30px 0' }, '수강생목록(원데이터)을 올리면 연도·차수 기준으로 어디까지 데이터가 들어왔는지 표시됩니다.'));
+      c.appendChild(card0); return;
+    }
+    var cov = state.coverage || LMS.coverage(state.students);
+    var s = cov.summary;
+    // 요약 카드
+    var kp = el('div', { class: 'kpis' });
+    kp.appendChild(kpiCard('연도', s.연도.join(', ') || '-', 'accent'));
+    kp.appendChild(kpiCard('최신 차수', s.최신차수 + '<small>차</small>', 'accent'));
+    kp.appendChild(kpiCard('총 수강건수', fmt(s.행수) + '<small>건</small>'));
+    kp.appendChild(kpiCard('교육신청일', (s.최근신청일 || '-'), 'good', '최근'));
+    kp.appendChild(kpiCard('수료일', (s.최근수료일 || '-'), 'good', '최근'));
+    c.appendChild(kp);
+    var note = el('div', { class: 'note info' });
+    note.innerHTML = '현재 업로드된 데이터는 <b>' + (s.연도.join(', ') || '-') + '년 · 최신 ' + s.최신차수 + '차</b>까지 반영되어 있습니다. ' +
+      '교육신청일 <b>' + (s.최초신청일 || '-') + ' ~ ' + (s.최근신청일 || '-') + '</b>. ' +
+      '(과정 유형별로 진행 차수가 달라, 아래 표에서 과정별 최신 차수를 확인하세요.)';
+    c.appendChild(note);
+    // 업로드 파일
+    if (state.studentFiles.length) {
+      var fc = el('div', { class: 'card' });
+      fc.appendChild(el('h2', {}, '업로드한 수강 데이터 파일'));
+      var fl = el('div'); state.studentFiles.forEach(function (f) { var chip = el('span', { class: 'filechip' }); chip.innerHTML = '<b>' + f.name + '</b> · ' + fmt(f.rows) + '행'; fl.appendChild(chip); }); fc.appendChild(fl);
+      c.appendChild(fc);
+    }
+    // 연도/차수별 건수
+    var card1 = el('div', { class: 'card' });
+    var head1 = el('div', { class: 'head' });
+    head1.appendChild(el('div', { html: '<h2>연도 · 차수별 수강 건수</h2><p class="desc">차수가 높을수록 최근 개강분입니다 (필수 경력자는 2주 단위, 신규자는 월 단위)</p>' }));
+    head1.appendChild(expBtn(cov.byYearRound, [
+      { key: '연도', label: '연도' }, { key: '차수', label: '차수' }, { key: '건수', label: '건수' }, { key: '최초신청일', label: '최초신청일' }, { key: '최근신청일', label: '최근신청일' }
+    ], '연도차수별_현황.xlsx'));
+    card1.appendChild(head1);
+    dataTable(card1, [
+      { key: '연도', label: '연도' },
+      { key: '차수', label: '차수', num: true, render: function (v, r) { return v + '차' + (v === s.최신차수 ? ' <span class="pill g">최신</span>' : ''); }, exp: function (v) { return v; } },
+      { key: '건수', label: '수강건수', num: true, render: fmt },
+      { key: '최초신청일', label: '최초 교육신청일' }, { key: '최근신청일', label: '최근 교육신청일' }
+    ], cov.byYearRound, { pageSize: 30, sortKey: '차수', sortDir: 1 });
+    c.appendChild(card1);
+    // 과정별 최신 차수
+    var card2 = el('div', { class: 'card' });
+    var head2 = el('div', { class: 'head' });
+    head2.appendChild(el('div', { html: '<h2>과정별 최신 차수 (어디까지 들어왔나)</h2><p class="desc">과정마다 보유한 차수와 최신 차수</p>' }));
+    head2.appendChild(expBtn(cov.byCourse, [
+      { key: '과정명', label: '과정명' }, { key: '카테고리', label: '카테고리' }, { key: '최신차수', label: '최신차수' }, { key: '보유차수', label: '보유차수' }, { key: '건수', label: '건수' }, { key: '최근신청일', label: '최근신청일' }, { key: '최근수료일', label: '최근수료일' }
+    ], '과정별_차수현황.xlsx'));
+    card2.appendChild(head2);
+    var fb = filterBar({ searchKey: 1, searchLabel: '과정 검색' }, [{ key: '카테고리', label: '카테고리', options: uniq(cov.byCourse, '카테고리') }], apply2);
+    card2.appendChild(fb.node);
+    var holder2 = el('div'); card2.appendChild(holder2); c.appendChild(card2);
+    function apply2() {
+      var q = (fb.sels.__search.value || '').trim().toLowerCase();
+      var data = cov.byCourse.filter(function (r) {
+        if (fb.sels['카테고리'].value && r.카테고리 !== fb.sels['카테고리'].value) return false;
+        if (q && String(r.과정명).toLowerCase().indexOf(q) < 0) return false;
+        return true;
+      });
+      holder2.innerHTML = '';
+      dataTable(holder2, [
+        { key: '과정명', label: '과정명' }, { key: '카테고리', label: '카테고리' },
+        { key: '최신차수', label: '최신차수', num: true, render: function (v) { return v + '차'; }, exp: function (v) { return v; } },
+        { key: '보유차수', label: '보유 차수' },
+        { key: '건수', label: '건수', num: true, render: fmt }, { key: '최근신청일', label: '최근 신청일' }, { key: '최근수료일', label: '최근 수료일' }
+      ], data, { pageSize: 30, sortKey: '건수' });
+    }
+    apply2();
+  }
+
   function renderPerson(c) {
     var card = el('div', { class: 'card' });
     card.appendChild(el('h2', {}, '개인별 이수 조회'));
@@ -588,7 +664,7 @@
       '<div class="note info" style="margin:0">모든 처리는 이 PC의 브라우저 안에서만 이루어지며, 어떤 데이터도 외부로 전송되지 않습니다.</div>';
     var dm = el('div', { class: 'toolbar', style: 'margin-top:12px' });
     var clr = el('button', { class: 'btn sec sm' }, '저장된 회원정보 삭제'); clr.onclick = function () { idbSet('members', null); idbSet('memberMeta', null); state.members = null; state.memberMeta = null; state.result = null; renderTab(); };
-    var clrS = el('button', { class: 'btn sec sm' }, '수강데이터 비우기'); clrS.onclick = function () { state.students = []; state.studentFiles = []; state.result = null; renderTab(); };
+    var clrS = el('button', { class: 'btn sec sm' }, '수강데이터 비우기'); clrS.onclick = function () { state.students = []; state.studentFiles = []; state.result = null; state.coverage = null; renderTab(); };
     var clrD = el('button', { class: 'btn sec sm' }, '직군변경 검토결정 초기화'); clrD.onclick = function () { if (confirm('직군변경 보류 건의 승인/반려 결정을 모두 초기화할까요?')) { state.decisions = {}; idbSet('decisions', {}); recompute(); } };
     dm.appendChild(clr); dm.appendChild(clrS); dm.appendChild(clrD); help.appendChild(dm);
     c.appendChild(help);
