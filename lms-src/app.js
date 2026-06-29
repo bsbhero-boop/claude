@@ -190,7 +190,7 @@
   /* ---------- 탭 렌더 ------------------------------------------------- */
   var TABS = [
     ['summary', '요약'], ['coverage', '데이터 현황'], ['rates', '이수율 현황'], ['notdone', '미이수자 명단'],
-    ['noexam', '미응시·재응시'], ['pending', '보류·직군변경'], ['courses', '과목별 현황'], ['person', '개인 조회'], ['settings', '설정·도움말']
+    ['noexam', '미응시·재응시'], ['pending', '보류·직군변경'], ['dup', '중복자 확인'], ['courses', '과목별 현황'], ['person', '개인 조회'], ['settings', '설정·도움말']
   ];
   function renderTabsBar() {
     var t = $('#tabs'); t.innerHTML = '';
@@ -208,6 +208,7 @@
     if (state.activeTab === 'notdone') return renderNotDone(c);
     if (state.activeTab === 'noexam') return renderNoExam(c);
     if (state.activeTab === 'pending') return renderPending(c);
+    if (state.activeTab === 'dup') return renderDuplicates(c);
     if (state.activeTab === 'courses') return renderCourses(c);
   }
   function emptyState() {
@@ -241,6 +242,9 @@
     var uk = Object.keys(state.result.unknownChasi || {});
     if (uk.length) { var n3 = el('div', { class: 'note' }); n3.innerHTML = '차시 매핑이 없는 선택과목 ' + uk.length + '건(테스트/신규 과목일 수 있음): ' + uk.slice(0, 6).join(', ') + '. <b>설정</b>에서 차시를 추가하면 경력자 이수 계산에 반영됩니다.'; c.appendChild(n3); }
 
+    // 이수율 현황표 (배정·채용 인원 대비)
+    c.appendChild(renderRateTable());
+
     // 직군/경력별 요약 카드
     var card = el('div', { class: 'card' });
     card.appendChild(el('h2', {}, '직군·경력별 이수 현황'));
@@ -254,6 +258,79 @@
     ];
     dataTable(card, cols, state.result.byGroup, { pageSize: 10, sortKey: '대상자' });
     c.appendChild(card);
+  }
+
+  function getAlloc() { if (!state.config.alloc) state.config.alloc = {}; return state.config.alloc; }
+  function saveAllocAndRender() { idbSet('config', state.config); renderTab(); }
+  function renderRateTable() {
+    var bg = {}; state.result.byGroup.forEach(function (g) { bg[g.key] = g; });
+    function cell(dir, car) { var g = bg[dir + ' / ' + car]; return g ? g : { 이수자: 0, 대상자: 0 }; }
+    var DIRS = [['전담사회복지사', '전담사회복지사'], ['생활지원사', '생활지원사']];
+    var alloc = getAlloc();
+    var rows = DIRS.map(function (d) {
+      var nv = cell(d[0], '신규자'), ex = cell(d[0], '경력자');
+      var a = nv.이수자 + ex.이수자; var target = nv.대상자 + ex.대상자;
+      var al = alloc[d[0]] || {}; var B = parseInt(al.배정) || 0, C = parseInt(al.채용) || 0;
+      return { dir: d[0], 신규: nv.이수자, 경력: ex.이수자, 소계: a, 교육대상: target, 배정: B, 채용: C };
+    });
+    var tot = rows.reduce(function (o, r) { return { 신규: o.신규 + r.신규, 경력: o.경력 + r.경력, 소계: o.소계 + r.소계, 교육대상: o.교육대상 + r.교육대상, 배정: o.배정 + r.배정, 채용: o.채용 + r.채용 }; }, { 신규: 0, 경력: 0, 소계: 0, 교육대상: 0, 배정: 0, 채용: 0 });
+
+    var card = el('div', { class: 'card' });
+    var head = el('div', { class: 'head' });
+    head.appendChild(el('div', { html: '<h2>이수율 현황표</h2><p class="desc">교육대상·배정인원(B)·채용인원(C) 대비 이수율. 배정/채용 인원은 직접 입력하세요.</p>' }));
+    var expBtnRows = rows.concat([{ dir: '총계', 신규: tot.신규, 경력: tot.경력, 소계: tot.소계, 교육대상: tot.교육대상, 배정: tot.배정, 채용: tot.채용 }]).map(function (r) {
+      return { 직군: r.dir, 신규자: r.신규, 경력자: r.경력, 이수소계: r.소계, 교육대상: r.교육대상, 배정인원: r.배정, 채용인원: r.채용,
+        대상대비: r.교육대상 ? (100 * r.소계 / r.교육대상).toFixed(1) : '', 배정대비: r.배정 ? (100 * r.소계 / r.배정).toFixed(1) : '', 채용대비: r.채용 ? (100 * r.소계 / r.채용).toFixed(1) : '' };
+    });
+    head.appendChild(expBtn(expBtnRows, [
+      { key: '직군', label: '직군' }, { key: '신규자', label: '신규자' }, { key: '경력자', label: '경력자' }, { key: '이수소계', label: '이수인원(A)' },
+      { key: '교육대상', label: '교육대상' }, { key: '배정인원', label: '배정인원(B)' }, { key: '채용인원', label: '채용인원(C)' },
+      { key: '대상대비', label: '대상대비(%)' }, { key: '배정대비', label: 'A/B(%)' }, { key: '채용대비', label: 'A/C(%)' }
+    ], '이수율_현황표.xlsx'));
+    card.appendChild(head);
+
+    var hd = el('div', { class: 'note info' });
+    hd.innerHTML = '(이수인원) 총 <b>' + fmt(tot.소계) + '명</b> (전담사회복지사 ' + fmt(rows[0].소계) + '명, 생활지원사 ' + fmt(rows[1].소계) + '명)';
+    card.appendChild(hd);
+
+    var tw = el('div', { class: 'tablewrap' }); var table = el('table');
+    table.innerHTML = '<thead>' +
+      '<tr><th rowspan="2">직군</th><th colspan="3" style="text-align:center">이수인원(A)</th><th rowspan="2" class="num">교육대상</th><th rowspan="2" class="num">배정인원(B)</th><th rowspan="2" class="num">채용인원(C)</th><th rowspan="2" class="num">대상대비</th><th rowspan="2" class="num">A/B</th><th rowspan="2" class="num">A/C</th></tr>' +
+      '<tr><th class="num">신규자</th><th class="num">경력자</th><th class="num">소계</th></tr></thead>';
+    var tb = el('tbody'); table.appendChild(tb);
+    function ratio(a, b) { return b ? (100 * a / b).toFixed(1) : '-'; }
+    function dataRow(r, isTotal) {
+      var tr = el('tr'); if (isTotal) { tr.style.fontWeight = '700'; tr.style.background = '#f7f9fc'; }
+      tr.appendChild(el('td', isTotal ? { style: 'font-weight:700' } : {}, r.dir));
+      tr.appendChild(el('td', { class: 'num' }, fmt(r.신규)));
+      tr.appendChild(el('td', { class: 'num' }, fmt(r.경력)));
+      tr.appendChild(el('td', { class: 'num' }, fmt(r.소계)));
+      tr.appendChild(el('td', { class: 'num' }, fmt(r.교육대상)));
+      // 배정/채용 입력 (총계 행은 합계 표시만)
+      if (isTotal) { tr.appendChild(el('td', { class: 'num' }, fmt(r.배정))); tr.appendChild(el('td', { class: 'num' }, fmt(r.채용))); }
+      else {
+        ['배정', '채용'].forEach(function (kk) {
+          var td = el('td', { class: 'num' });
+          var inp = el('input', { type: 'number', value: (alloc[r.dir] && alloc[r.dir][kk]) || '', style: 'width:84px;text-align:right' });
+          inp.placeholder = '0';
+          inp.onchange = function () { if (!alloc[r.dir]) alloc[r.dir] = {}; alloc[r.dir][kk] = parseInt(inp.value) || 0; saveAllocAndRender(); };
+          td.appendChild(inp); tr.appendChild(td);
+        });
+      }
+      tr.appendChild(el('td', { class: 'num' }, ratio(r.소계, r.교육대상)));
+      tr.appendChild(el('td', { class: 'num' }, ratio(r.소계, r.배정)));
+      tr.appendChild(el('td', { class: 'num' }, ratio(r.소계, r.채용)));
+      return tr;
+    }
+    rows.forEach(function (r) { tb.appendChild(dataRow(r, false)); });
+    tb.appendChild(dataRow({ dir: '총계', 신규: tot.신규, 경력: tot.경력, 소계: tot.소계, 교육대상: tot.교육대상, 배정: tot.배정, 채용: tot.채용 }, true));
+    tw.appendChild(table); card.appendChild(tw);
+    var noteWrap = el('div', { class: 'toolbar', style: 'margin-top:8px' });
+    noteWrap.appendChild(el('span', { class: 'hint' }, '※ 배정·채용인원 기준일/메모:'));
+    var noteInp = el('input', { type: 'text', value: state.config.allocNote || '', placeholder: "예: 모인우리 '26.3.31. 기준", style: 'min-width:280px' });
+    noteInp.onchange = function () { state.config.allocNote = noteInp.value; idbSet('config', state.config); };
+    noteWrap.appendChild(noteInp); card.appendChild(noteWrap);
+    return card;
   }
 
   function renderRates(c) {
@@ -373,24 +450,32 @@
     card.appendChild(note);
     var cols = [
       { key: 'ID', label: 'ID' }, { key: '성명', label: '성명' }, { key: '시도', label: '시도' }, { key: '기관명', label: '기관명' },
+      { key: '차수', label: '차수', num: true, render: function (v) { return v == null ? '-' : v + '차'; }, exp: function (v) { return v; } },
       { key: '카테고리', label: '구분' }, { key: '과정명', label: '미응시 과목/과정' },
       { key: '진도율', label: '진도율', num: true, exp: function (v) { return v; } }, { key: '점수', label: '점수', num: true },
       { key: '해당과목완료', label: '해당과목 완료', render: function (v) { return v ? '<span class="pill y">예</span>' : '<span class="pill n">아니오</span>'; }, exp: function (v) { return v ? '예' : '아니오'; } },
-      { key: '재응시필요', label: '재응시 필요', render: function (v) { return v ? '<span class="pill g">필요</span>' : '<span class="muted">-</span>'; }, exp: function (v) { return v ? '필요' : ''; } },
-      { key: '전체이수', label: '전체 이수', render: function (v) { return yn(v); }, exp: function (v) { return v ? '이수' : '미이수'; } }
+      { key: '전체이수', label: '직무교육 이수', render: function (v) { return yn(v); }, exp: function (v) { return v ? '이수' : '미이수'; } },
+      { key: '재응시필요', label: '재응시 필요', render: function (v) { return v ? '<span class="pill g">필요</span>' : '<span class="muted">-</span>'; }, exp: function (v) { return v ? '필요' : ''; } }
     ];
+    var chasuOpts = uniq(rows, '차수').filter(function (x) { return x !== ''; }).sort(function (a, b) { return (+a) - (+b); }).map(function (x) { return x + '차'; });
     var fb = filterBar({ searchKey: 1, searchLabel: '검색(ID·성명·기관)' }, [
-      { key: '시도', label: '시도', options: uniq(rows, '시도') },
-      { key: '재응시', label: '재응시 필요만', options: ['필요만'] }
+      { key: '차수', label: '차수', options: chasuOpts },
+      { key: '이수여부', label: '직무교육 이수여부', options: ['이수자만', '미이수자만'] },
+      { key: '재응시', label: '재응시 필요만', options: ['필요만'] },
+      { key: '시도', label: '시도', options: uniq(rows, '시도') }
     ], apply);
     var head = el('div', { class: 'head' });
-    head.appendChild(el('div', { html: '<h2>미응시자 / 재응시 안내 대상</h2><p class="desc">진도 100%·점수 0 (연 ' + fmt(rows.length) + '건 · 재응시필요 ' + fmt(state.result.kpi.재응시필요인원) + '건)</p>' }));
+    head.appendChild(el('div', { html: '<h2>미응시자 / 재응시 안내 대상</h2><p class="desc">진도 100%·점수 0 (연 ' + fmt(rows.length) + '건). <b>차수</b>로 거른 뒤, <b>직무교육 이수</b>가 “미이수”인 사람만 재응시 대상입니다(이수자는 자동 제외).</p>' }));
     var expHolder = el('div'); head.appendChild(expHolder);
     card.appendChild(head); card.appendChild(fb.node);
     var tableHolder = el('div'); card.appendChild(tableHolder); c.appendChild(card);
     function apply() {
       var q = (fb.sels.__search.value || '').trim().toLowerCase();
+      var cha = fb.sels['차수'].value ? parseInt(fb.sels['차수'].value) : null;
       var filtered = rows.filter(function (r) {
+        if (cha != null && r.차수 !== cha) return false;
+        if (fb.sels['이수여부'].value === '이수자만' && !r.전체이수) return false;
+        if (fb.sels['이수여부'].value === '미이수자만' && r.전체이수) return false;
         if (fb.sels['시도'].value && r.시도 !== fb.sels['시도'].value) return false;
         if (fb.sels['재응시'].value && !r.재응시필요) return false;
         if (q && (String(r.ID).toLowerCase().indexOf(q) < 0 && String(r.성명).toLowerCase().indexOf(q) < 0 && String(r.기관명).toLowerCase().indexOf(q) < 0)) return false;
@@ -398,6 +483,49 @@
       });
       tableHolder.innerHTML = ''; dataTable(tableHolder, cols, filtered, { pageSize: 50, sortKey: '재응시필요' });
       expHolder.innerHTML = ''; expHolder.appendChild(expBtn(filtered, cols, '미응시_재응시대상.xlsx', '엑셀 다운로드(' + fmt(filtered.length) + ')'));
+    }
+    apply();
+  }
+
+  function renderDuplicates(c) {
+    var rows = state.result.duplicateRows || [];
+    var k = state.result.kpi;
+    var card = el('div', { class: 'card' });
+    var note = el('div', { class: 'note' });
+    note.innerHTML = '같은 <b>성명 + 기관코드</b>인데 ID가 2개 이상인 건(동일인이 계정을 중복 생성했을 가능성). ' +
+      '특히 <b>그룹 내 이수자가 2명 이상</b>이면 한 사람이 이수자로 <b>중복 집계</b>되었을 수 있으니 확인이 필요합니다.';
+    card.appendChild(note);
+    var sum = el('div', { class: 'toolbar' });
+    sum.innerHTML = '<span class="filechip">중복의심 그룹 <b>' + fmt(k.중복의심그룹) + '</b></span><span class="filechip">관련 인원 <b>' + fmt(k.중복의심인원) + '</b></span><span class="filechip">이수자 2명+ 그룹 <b>' + fmt(k.중복이수그룹) + '</b></span>';
+    card.appendChild(sum);
+    if (!rows.length) { card.appendChild(el('div', { class: 'empty-state', html: '<div class="big">✅</div>중복 의심 건이 없습니다.' })); c.appendChild(card); return; }
+    var cols = [
+      { key: '성명', label: '성명' }, { key: '시도', label: '시도' }, { key: '기관명', label: '기관명' }, { key: '기관코드', label: '기관코드' },
+      { key: 'ID', label: 'ID' }, { key: '직군', label: '직군' }, { key: '경력', label: '경력' },
+      { key: '이수', label: '이수', render: function (v) { return yn(v); }, exp: function (v) { return v ? '이수' : '미이수'; } },
+      { key: '수강기록', label: '수강기록', render: function (v) { return v ? '있음' : '<span class="muted">없음</span>'; }, exp: function (v) { return v ? '있음' : '없음'; } },
+      { key: '그룹인원', label: '그룹인원', num: true },
+      { key: '그룹이수자', label: '그룹내 이수자', num: true, render: function (v) { return v >= 2 ? '<span class="pill g">' + v + '</span>' : '' + v; }, exp: function (v) { return v; } }
+    ];
+    var fb = filterBar({ searchKey: 1, searchLabel: '검색(성명·기관·ID)' }, [
+      { key: '시도', label: '시도', options: uniq(rows, '시도') },
+      { key: '이수중복', label: '이수자 2명+ 그룹만', options: ['중복집계 의심만'] }
+    ], apply);
+    var head = el('div', { class: 'head' });
+    head.appendChild(el('div', { html: '<h2>중복자 확인</h2><p class="desc">동일인 중복계정 의심 — 같은 성명·기관코드, ID 2개 이상</p>' }));
+    var expHolder = el('div'); head.appendChild(expHolder);
+    card.appendChild(head); card.appendChild(fb.node);
+    var holder = el('div'); card.appendChild(holder); c.appendChild(card);
+    function apply() {
+      var q = (fb.sels.__search.value || '').trim().toLowerCase();
+      var filtered = rows.filter(function (r) {
+        if (fb.sels['시도'].value && r.시도 !== fb.sels['시도'].value) return false;
+        if (fb.sels['이수중복'].value && r.그룹이수자 < 2) return false;
+        if (q && (String(r.성명).toLowerCase().indexOf(q) < 0 && String(r.기관명).toLowerCase().indexOf(q) < 0 && String(r.ID).toLowerCase().indexOf(q) < 0)) return false;
+        return true;
+      });
+      holder.innerHTML = ''; dataTable(holder, cols, filtered, { pageSize: 50, sortKey: '그룹이수자' });
+      expHolder.innerHTML = ''; expHolder.appendChild(expBtn(filtered, cols, '중복자확인.xlsx', '엑셀 다운로드(' + fmt(filtered.length) + ')'));
     }
     apply();
   }

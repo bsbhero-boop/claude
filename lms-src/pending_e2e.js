@@ -2,7 +2,7 @@ const { chromium } = require('playwright');
 const path = require('path');
 const fs = require('fs');
 const XLSX = require('./node_modules/xlsx');
-const HTML = 'file://' + path.resolve(__dirname, '..', 'lms-statistics.html');
+const HTML = 'file://' + path.resolve(__dirname, '..', 'lms-statistics-v3.html');
 const SCR = path.join(require('os').tmpdir(), 'lms-pending-test');
 fs.mkdirSync(SCR, { recursive: true });
 

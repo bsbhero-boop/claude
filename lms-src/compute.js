@@ -132,7 +132,7 @@
       var prog = parseNum(r['진도율']);
       var score = parseNum(r['점수']);
       if (prog >= cfg.examNoShow.progressGte && score <= cfg.examNoShow.scoreLte && !done) {
-        o.examNoShow.push({ 과정명: name, 카테고리: cat, 진도율: prog, 점수: score, 교육차시: S(r['교육차시']),
+        o.examNoShow.push({ 과정명: name, 카테고리: cat, 진도율: prog, 점수: score, 교육차시: S(r['교육차시']), 연도차수: S(r['연도/차수']),
           기관명: S(r['기관명']), 시도: S(r['시도']), 시군구: S(r['시군구']), 성명: S(r['성명']) });
       }
     }
@@ -262,11 +262,14 @@
         // 필수 과목 완료 여부는 pil Set으로 별도 확인
         if (e.카테고리 === '직무교육(필수)') { var pm2 = pilMeta(e.과정명); subjectDone = o.pil.has(pm2.경력 + '|' + pm2.직군); }
         var per = personByID.get(id) || {};
+        var ycs = S(e.연도차수); var chasu = ycs.indexOf('/') >= 0 ? parseInt(ycs.split('/')[1], 10) : null;
         examNoShowRows.push({
           ID: id, 성명: e.성명 || per.성명 || '', 기관명: e.기관명 || per.기관명 || '', 시도: per.시도 || memberSido.get(id) || e.시도 || '',
-          시군구: e.시군구 || per.시군구 || '', 카테고리: e.카테고리, 과정명: e.과정명, 진도율: e.진도율, 점수: e.점수,
+          시군구: e.시군구 || per.시군구 || '', 카테고리: e.카테고리, 과정명: e.과정명, 연도차수: ycs, 차수: (isNaN(chasu) ? null : chasu),
+          진도율: e.진도율, 점수: e.점수,
           해당과목완료: subjectDone, 전체이수: !!per.이수, 직군: per.직군 || '', 경력: per.경력 || '',
-          재응시필요: !subjectDone
+          // 재응시 필요 = 해당 과목 미완료 AND 본인이 아직 직무교육 미이수(이미 이수자는 제외)
+          재응시필요: !subjectDone && !per.이수
         });
       });
     });
@@ -276,6 +279,27 @@
     var notCompleted = persons.filter(function (p) { return p.기준정의 && !p.이수 && !(p.보류후보 && p.보류상태 === 'pending'); });
     // 직군변경 보류 후보 (기준정의 대상)
     var pendingRows = persons.filter(function (p) { return p.기준정의 && p.보류후보; });
+
+    // 중복자 확인: 같은 (성명+기관코드)인데 ID가 여러 개 = 동일인 중복계정 의심
+    var dupMap = new Map();
+    persons.forEach(function (p) {
+      var code = S(p.기관코드);
+      if (!p.성명 || !code || code === '\\N') return;
+      var key = p.성명 + '|' + code;
+      var g = dupMap.get(key); if (!g) { g = []; dupMap.set(key, g); } g.push(p);
+    });
+    var duplicateRows = []; var dupGroupCnt = 0, dupPersonCnt = 0, dupCompletedGroups = 0;
+    dupMap.forEach(function (g, key) {
+      if (g.length < 2) return;
+      dupGroupCnt++; dupPersonCnt += g.length;
+      var doneCnt = g.filter(function (x) { return x.이수; }).length;
+      if (doneCnt >= 2) dupCompletedGroups++;
+      g.forEach(function (p) {
+        duplicateRows.push({ 그룹: key, 성명: p.성명, 시도: p.시도, 기관명: p.기관명, 기관코드: p.기관코드, ID: p.ID, 직군: p.직군, 경력: p.경력,
+          이수: p.이수, 수강기록: p.수강기록, 그룹인원: g.length, 그룹이수자: doneCnt });
+      });
+    });
+    duplicateRows.sort(function (a, b) { return a.그룹 === b.그룹 ? 0 : (a.그룹 < b.그룹 ? -1 : 1); });
 
     // KPI
     var ruleP = persons.filter(function (p) { return p.기준정의; });
@@ -291,7 +315,8 @@
       대상자중수강기록없음: notFoundInStudent,
       지역외제외: regionExcluded,
       보류미검토: pendingRows.filter(function (p) { return p.보류상태 === 'pending'; }).length,
-      보류승인: pendingRows.filter(function (p) { return p.보류상태 === 'approve'; }).length
+      보류승인: pendingRows.filter(function (p) { return p.보류상태 === 'approve'; }).length,
+      중복의심그룹: dupGroupCnt, 중복의심인원: dupPersonCnt, 중복이수그룹: dupCompletedGroups
     };
 
     return {
@@ -304,6 +329,7 @@
       persons: persons,
       notCompleted: notCompleted,
       pendingRows: pendingRows,
+      duplicateRows: duplicateRows,
       examNoShowRows: examNoShowRows,
       unknownChasi: unknownChasi,
       perID: perID,

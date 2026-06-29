@@ -2,7 +2,7 @@ const { chromium } = require('playwright');
 const path = require('path');
 const fs = require('fs');
 const UP = '/root/.claude/uploads/cd57ac93-8f4d-5823-bb34-c33379307f24/';
-const HTML = 'file://' + path.resolve(__dirname, '..', 'lms-statistics.html');
+const HTML = 'file://' + path.resolve(__dirname, '..', 'lms-statistics-v3.html');
 const userDataDir = '/tmp/claude-0/-home-user-claude/cd57ac93-8f4d-5823-bb34-c33379307f24/scratchpad/pw-profile';
 const DL = '/tmp/claude-0/-home-user-claude/cd57ac93-8f4d-5823-bb34-c33379307f24/scratchpad/dl';
 fs.mkdirSync(DL, { recursive: true });

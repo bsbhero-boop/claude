@@ -1,7 +1,7 @@
 const { chromium } = require('playwright');
 const path = require('path');
 const UP = '/root/.claude/uploads/cd57ac93-8f4d-5823-bb34-c33379307f24/';
-const HTML = 'file://' + path.resolve(__dirname, '..', 'lms-statistics.html');
+const HTML = 'file://' + path.resolve(__dirname, '..', 'lms-statistics-v3.html');
 const MEMBER = UP + 'd7a572fb-____.xlsx';
 const S1 = UP + '4ecf5ad8-__________20260626.____2.xls';
 const ALL = ['4ecf5ad8-__________20260626.____2.xls', '186cd960-__________20260626.____3.xls', '835ae5a9-__________20260626.____4.xls'].map(f => UP + f);
@@ -79,7 +79,7 @@ function wire(page, errs) {
     await p.waitForFunction(() => window.__LMS_APP && window.__LMS_APP.members, null, { timeout: 60000 });
     await p.setInputFiles('#fileStudent', ALL);
     await p.waitForFunction(() => window.__LMS_APP && window.__LMS_APP.result, null, { timeout: 180000 });
-    for (const t of ['요약', '이수율 현황', '미이수자 명단', '미응시·재응시', '보류·직군변경', '과목별 현황', '개인 조회', '설정·도움말']) {
+    for (const t of ['요약', '이수율 현황', '미이수자 명단', '미응시·재응시', '보류·직군변경', '중복자 확인', '과목별 현황', '개인 조회', '설정·도움말']) {
       await p.click(`button.tab:has-text("${t}")`); await p.waitForTimeout(100);
     }
     // 미이수자: 필터 + 정렬 + 검색

@@ -1,7 +1,7 @@
 const { chromium } = require('playwright');
 const path = require('path');
 const UP = '/root/.claude/uploads/cd57ac93-8f4d-5823-bb34-c33379307f24/';
-const HTML = 'file://' + path.resolve(__dirname, '..', 'lms-statistics.html');
+const HTML = 'file://' + path.resolve(__dirname, '..', 'lms-statistics-v3.html');
 const MEMBER = UP + 'd7a572fb-____.xlsx';
 const STUDENTS = ['4ecf5ad8-__________20260626.____2.xls', '186cd960-__________20260626.____3.xls', '835ae5a9-__________20260626.____4.xls'].map(f => UP + f);
 
@@ -51,7 +51,24 @@ const STUDENTS = ['4ecf5ad8-__________20260626.____2.xls', '186cd960-__________2
     (cov && cov.최신차수 === 14 && cov.연도.join() === '2026' && cov.최근신청일 === '2026-06-26') ? '✅' : '❌');
   if (!(cov && cov.최신차수 === 14 && cov.연도.join() === '2026' && cov.최근신청일 === '2026-06-26')) ok = false;
 
-  for (const label of ['데이터 현황', '이수율 현황', '미이수자 명단', '미응시·재응시', '보류·직군변경', '과목별 현황', '개인 조회', '설정·도움말', '요약']) {
+  // v3: 재응시(이수자 제외), 중복자, 이수율 현황표 검증
+  const v3 = await page.evaluate(() => {
+    const R = window.__LMS_APP.result;
+    const exam = R.examNoShowRows;
+    return {
+      재응시필요: R.kpi.재응시필요인원,
+      이수자중재응시: exam.filter(e => e.전체이수 && e.재응시필요).length, // 0이어야
+      차수있음: exam.filter(e => e.차수 != null).length,
+      중복그룹: R.kpi.중복의심그룹, 중복인원: R.kpi.중복의심인원, 중복이수그룹: R.kpi.중복이수그룹,
+      dupRows: R.duplicateRows.length
+    };
+  });
+  console.log('재응시필요(이수자 제외):', v3.재응시필요, '| 이수자인데 재응시필요:', v3.이수자중재응시, v3.이수자중재응시 === 0 ? '✅' : '❌',
+    '| 차수부여:', v3.차수있음 > 0 ? '✅' : '❌');
+  console.log('중복자: 그룹', v3.중복그룹, '인원', v3.중복인원, '이수2명+그룹', v3.중복이수그룹, (v3.중복그룹 > 0 && v3.dupRows === v3.중복인원) ? '✅' : '❌');
+  if (v3.이수자중재응시 !== 0 || !(v3.차수있음 > 0) || !(v3.중복그룹 > 0)) ok = false;
+
+  for (const label of ['데이터 현황', '이수율 현황', '미이수자 명단', '미응시·재응시', '보류·직군변경', '중복자 확인', '과목별 현황', '개인 조회', '설정·도움말', '요약']) {
     await page.click(`button.tab:has-text("${label}")`);
     await page.waitForTimeout(120);
     const cells = await page.$$eval('#content table tbody tr', rs => rs.length).catch(() => 0);
@@ -84,6 +101,17 @@ const STUDENTS = ['4ecf5ad8-__________20260626.____2.xls', '186cd960-__________2
   await page.waitForTimeout(200);
   const personOK = await page.$eval('#content', n => n.textContent.includes('수강 이력')).catch(() => false);
   console.log('개인조회(k80love) 이력표시:', personOK);
+
+  // 요약 탭 이수율 현황표: 전담 배정인원 입력 → A/B 계산 + 저장 확인
+  await page.click('button.tab:has-text("요약")'); await page.waitForTimeout(150);
+  // 첫 번째 number input = 전담 배정인원
+  await page.fill('#content input[type=number] >> nth=0', '2716');
+  await page.dispatchEvent('#content input[type=number] >> nth=0', 'change'); await page.waitForTimeout(200);
+  const alloc = await page.evaluate(() => window.__LMS_APP.config.alloc && window.__LMS_APP.config.alloc['전담사회복지사']);
+  const tableTxt = await page.$eval('#content', n => n.textContent);
+  const hasRatio = /이수인원/.test(tableTxt) && tableTxt.includes('A/B');
+  console.log('이수율 현황표: 배정입력 저장=', JSON.stringify(alloc), '| 표 구조=', hasRatio ? '✅' : '❌');
+  if (!(alloc && alloc.배정 === 2716) || !hasRatio) ok = false;
 
   console.log('\nconsole errors:', errors.length, errors.slice(0, 5));
   console.log('\nRESULT:', ok && errors.length === 0 ? 'PASS ✅' : 'CHECK ⚠️');
