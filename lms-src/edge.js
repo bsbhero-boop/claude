@@ -79,7 +79,7 @@ function wire(page, errs) {
     await p.waitForFunction(() => window.__LMS_APP && window.__LMS_APP.members, null, { timeout: 60000 });
     await p.setInputFiles('#fileStudent', ALL);
     await p.waitForFunction(() => window.__LMS_APP && window.__LMS_APP.result, null, { timeout: 180000 });
-    for (const t of ['요약', '이수율 현황', '미이수자 명단', '미응시·재응시', '과목별 현황', '개인 조회', '설정·도움말']) {
+    for (const t of ['요약', '이수율 현황', '미이수자 명단', '미응시·재응시', '보류·직군변경', '과목별 현황', '개인 조회', '설정·도움말']) {
       await p.click(`button.tab:has-text("${t}")`); await p.waitForTimeout(100);
     }
     // 미이수자: 필터 + 정렬 + 검색

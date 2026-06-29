@@ -45,7 +45,7 @@ const STUDENTS = ['4ecf5ad8-__________20260626.____2.xls', '186cd960-__________2
   if (badSido.length) ok = false;
 
   // 탭 클릭 점검
-  for (const label of ['이수율 현황', '미이수자 명단', '미응시·재응시', '과목별 현황', '개인 조회', '설정·도움말', '요약']) {
+  for (const label of ['이수율 현황', '미이수자 명단', '미응시·재응시', '보류·직군변경', '과목별 현황', '개인 조회', '설정·도움말', '요약']) {
     await page.click(`button.tab:has-text("${label}")`);
     await page.waitForTimeout(120);
     const cells = await page.$$eval('#content table tbody tr', rs => rs.length).catch(() => 0);

@@ -83,6 +83,8 @@
     for (var msi = 0; msi < memberRows.length; msi++) { memberSido.set(S(memberRows[msi]['ID']), S(memberRows[msi]['시도'])); }
     function regionOK(id) { return !allowed || allowed.has(memberSido.get(id)); }
     var skippedRegion = 0;
+    // 직군변경 보류 검토 결정: { ID: 'approve' | 'reject' }
+    var decisions = cfg.decisions || {};
 
     // ---- 1) 학생 데이터 1-pass 집계 -------------------------------------
     // perID: { pil:Set("경력|직군"), sel:Set(subject), selRetake, examNoShow:[], subjAny:Set, subjDone:Set }
@@ -93,7 +95,7 @@
 
     function pid(id) {
       var o = perID.get(id);
-      if (!o) { o = { pil: new Set(), selDone: new Set(), examNoShow: [], subjAny: new Set(), subjDone: new Set() }; perID.set(id, o); }
+      if (!o) { o = { pil: new Set(), pilDetail: [], selDone: new Set(), examNoShow: [], subjAny: new Set(), subjDone: new Set() }; perID.set(id, o); }
       return o;
     }
 
@@ -116,7 +118,10 @@
 
       if (cat === '직무교육(필수)') {
         var pm = pilMeta(name);
-        if (done && pm.경력 && pm.직군) o.pil.add(pm.경력 + '|' + pm.직군);
+        if (done && pm.경력 && pm.직군) {
+          o.pil.add(pm.경력 + '|' + pm.직군);
+          o.pilDetail.push({ 경력: pm.경력, 과정직군: pm.직군, 당시직군: normDirect(S(r['사용자유형'])), 당시직군원본: S(r['사용자유형']), 과정명: name, 수료일: S(r['수료일']) });
+        }
       } else if (cat === '직무교육(선택)') {
         var sub = selBase(name);
         o.subjAny.add(sub);
@@ -152,23 +157,39 @@
       var o2 = perID.get(mid);
       var hasRule = (dir === '생활지원사' || dir === '전담사회복지사') && (career === '신규자' || career === '경력자');
 
-      var pilDone = false, selSum = 0, need = 0, 이수 = false, reason = '';
+      var pilDoneStrict = false, selSum = 0, need = hasRule ? (cfg.thresholds[dir] || 0) : 0, 이수 = false, reason = '';
       if (o2) {
-        pilDone = o2.pil.has(career + '|' + dir);
+        pilDoneStrict = o2.pil.has(career + '|' + dir);
         o2.selDone.forEach(function (sub) { selSum += (chasi[sub] || 0); });
       }
+
+      // 직군변경 보류 후보: 현재 직군 필수는 미수료지만, 다른 직군 필수를 수료한 경우
+      // (당시 수강기록의 직군 = 그 과정 직군이면 전직 가능성 높음)
+      var crossDone = null;
+      if (hasRule && !pilDoneStrict && o2) {
+        o2.pilDetail.forEach(function (d) {
+          if (d.과정직군 && d.과정직군 !== dir) {
+            if (!crossDone || (d.당시직군 === d.과정직군 && crossDone.당시직군 !== crossDone.과정직군)) crossDone = d;
+          }
+        });
+      }
+      var isPending = !!crossDone;
+      var decision = isPending ? (decisions[mid] || 'pending') : null; // pending/approve/reject
+      var pilDone = pilDoneStrict || (isPending && decision === 'approve');
+
       if (!hasRule) {
         reason = '이수기준 미정의(' + (ut || '미상') + ')';
       } else if (career === '신규자') {
         이수 = pilDone;
-        if (!이수) reason = '필수 미수료';
+        if (!이수) reason = isPending ? '직군변경 검토 필요(당시 ' + crossDone.당시직군 + ')' : '필수 미수료';
       } else { // 경력자
-        need = cfg.thresholds[dir] || 0;
         이수 = pilDone && (selSum >= need);
-        if (!pilDone && selSum < need) reason = '필수 미수료 + 선택 ' + selSum + '/' + need + '차시';
+        if (isPending && decision !== 'approve' && !pilDoneStrict) reason = '직군변경 검토 필요(당시 ' + crossDone.당시직군 + ')' + (selSum < need ? ' · 선택 ' + selSum + '/' + need : '');
+        else if (!pilDone && selSum < need) reason = '필수 미수료 + 선택 ' + selSum + '/' + need + '차시';
         else if (!pilDone) reason = '필수 미수료';
         else if (selSum < need) reason = '선택 ' + selSum + '/' + need + '차시';
       }
+      var approveWould = hasRule && (career === '신규자' ? true : (selSum >= need));
 
       persons.push({
         ID: mid, 성명: S(m['성명']), 시도: S(m['시도']), 시군구: S(m['시군구']),
@@ -177,7 +198,11 @@
         필수수료: pilDone, 선택차시: selSum, 필요차시: need, 이수: 이수,
         기준정의: hasRule, 사유: 이수 ? '' : reason,
         미응시건수: o2 ? o2.examNoShow.length : 0,
-        수강기록: o2 ? 1 : 0
+        수강기록: o2 ? 1 : 0,
+        보류후보: isPending, 보류상태: decision,
+        당시직군: crossDone ? (crossDone.당시직군원본 || crossDone.당시직군) : '',
+        변경완료과정: crossDone ? crossDone.과정명 : '', 변경완료경력: crossDone ? crossDone.경력 : '',
+        변경완료수료일: crossDone ? crossDone.수료일 : '', 승인시이수: isPending ? approveWould : false
       });
       if (!o2) notFoundInStudent++;
     }
@@ -247,8 +272,10 @@
     });
     examNoShowRows.sort(function (a, b) { return (a.재응시필요 === b.재응시필요) ? 0 : (a.재응시필요 ? -1 : 1); });
 
-    // 미이수자 명단(대상자 중 미이수, 기준정의자)
-    var notCompleted = persons.filter(function (p) { return p.기준정의 && !p.이수; });
+    // 미이수자 명단(대상자 중 미이수, 기준정의자) — 단, 미검토 보류건은 제외(보류 탭에서 검토)
+    var notCompleted = persons.filter(function (p) { return p.기준정의 && !p.이수 && !(p.보류후보 && p.보류상태 === 'pending'); });
+    // 직군변경 보류 후보 (기준정의 대상)
+    var pendingRows = persons.filter(function (p) { return p.기준정의 && p.보류후보; });
 
     // KPI
     var ruleP = persons.filter(function (p) { return p.기준정의; });
@@ -262,7 +289,9 @@
       재응시필요인원: examNoShowRows.filter(function (e) { return e.재응시필요; }).length,
       수강취소제외: skippedCancel,
       대상자중수강기록없음: notFoundInStudent,
-      지역외제외: regionExcluded
+      지역외제외: regionExcluded,
+      보류미검토: pendingRows.filter(function (p) { return p.보류상태 === 'pending'; }).length,
+      보류승인: pendingRows.filter(function (p) { return p.보류상태 === 'approve'; }).length
     };
 
     return {
@@ -274,6 +303,7 @@
       courseRows: courseRows,
       persons: persons,
       notCompleted: notCompleted,
+      pendingRows: pendingRows,
       examNoShowRows: examNoShowRows,
       unknownChasi: unknownChasi,
       perID: perID,

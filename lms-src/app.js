@@ -20,6 +20,7 @@
     students: [], studentFiles: [],
     studentByID: null, result: null,
     config: JSON.parse(JSON.stringify(LMS.DEFAULT_CONFIG)),
+    decisions: {}, // 직군변경 보류 검토 결정 { ID: 'approve'|'reject' }
     activeTab: 'summary'
   };
 
@@ -128,7 +129,8 @@
       // ID 인덱스(개인조회용)
       state.studentByID = new Map();
       for (var i = 0; i < state.students.length; i++) { var id = String(state.students[i].ID || '').trim(); if (!id) continue; var a = state.studentByID.get(id); if (!a) { a = []; state.studentByID.set(id, a); } a.push(state.students[i]); }
-      state.result = LMS.analyze(state.members, state.students, state.config);
+      var cfg = Object.assign({}, state.config, { decisions: state.decisions });
+      state.result = LMS.analyze(state.members, state.students, cfg);
       renderTab();
     });
   }
@@ -186,7 +188,7 @@
   /* ---------- 탭 렌더 ------------------------------------------------- */
   var TABS = [
     ['summary', '요약'], ['rates', '이수율 현황'], ['notdone', '미이수자 명단'],
-    ['noexam', '미응시·재응시'], ['courses', '과목별 현황'], ['person', '개인 조회'], ['settings', '설정·도움말']
+    ['noexam', '미응시·재응시'], ['pending', '보류·직군변경'], ['courses', '과목별 현황'], ['person', '개인 조회'], ['settings', '설정·도움말']
   ];
   function renderTabsBar() {
     var t = $('#tabs'); t.innerHTML = '';
@@ -202,6 +204,7 @@
     if (state.activeTab === 'rates') return renderRates(c);
     if (state.activeTab === 'notdone') return renderNotDone(c);
     if (state.activeTab === 'noexam') return renderNoExam(c);
+    if (state.activeTab === 'pending') return renderPending(c);
     if (state.activeTab === 'courses') return renderCourses(c);
   }
   function emptyState() {
@@ -228,6 +231,7 @@
       (k.기준미정의대상 ? '이수기준 미정의(중간관리자/기타 등) ' + fmt(k.기준미정의대상) + '명은 별도(설정·도움말 참고).' : '');
     c.appendChild(note);
     if (k.지역외제외) { var nr = el('div', { class: 'note' }); nr.innerHTML = '16개 시도 외(중앙·미상 등)라서 통계에서 제외된 교육대상 인원: <b>' + fmt(k.지역외제외) + '명</b> (대상 시도는 설정에서 변경 가능).'; c.appendChild(nr); }
+    if (k.보류미검토) { var np = el('div', { class: 'note' }); np.innerHTML = '직군 변경(전직) 가능성으로 <b>검토 대기</b> 중인 건: <b>' + fmt(k.보류미검토) + '명</b> — <b>보류·직군변경</b> 탭에서 승인/반려해 주세요. (현재 미이수로 집계됨)'; c.appendChild(np); }
     if (k.대상자중수강기록없음) {
       var n2 = el('div', { class: 'note' }); n2.innerHTML = '교육대상자 중 수강 기록이 전혀 없는 인원: <b>' + fmt(k.대상자중수강기록없음) + '명</b> (전원 미이수로 집계됨 — 미수강 독려 대상).'; c.appendChild(n2);
     }
@@ -395,6 +399,70 @@
     apply();
   }
 
+  function setDecision(id, val) {
+    if (val === 'pending') delete state.decisions[id]; else state.decisions[id] = val;
+    idbSet('decisions', state.decisions); recompute();
+  }
+  function statusControl(p) {
+    var box = el('div'); box.style.whiteSpace = 'nowrap';
+    [['pending', '미검토'], ['approve', '승인'], ['reject', '반려']].forEach(function (o) {
+      var cur = (p.보류상태 || 'pending') === o[0];
+      var b = el('button', { class: 'btn sm' + (cur ? '' : ' sec') }, o[1]);
+      b.style.padding = '3px 8px'; b.style.marginRight = '4px';
+      if (cur) { if (o[0] === 'approve') b.style.background = 'var(--good)'; else if (o[0] === 'reject') b.style.background = 'var(--bad)'; }
+      b.onclick = function (e) { e.stopPropagation(); setDecision(p.ID, o[0]); };
+      box.appendChild(b);
+    });
+    return box;
+  }
+  function renderPending(c) {
+    var rows = state.result.pendingRows || [];
+    var card = el('div', { class: 'card' });
+    var note = el('div', { class: 'note' });
+    note.innerHTML = '교육 수료 <b>당시 직군</b>(수강목록)과 <b>현재 직군</b>(회원정보)이 달라 <b>직군 변경(전직)</b> 가능성이 있는 건입니다. ' +
+      '기본은 미이수로 두고, 검토 후 <b>승인</b>하면 이수로 반영됩니다(통계 즉시 갱신). 결정은 브라우저에 저장됩니다.';
+    card.appendChild(note);
+    var k = state.result.kpi;
+    var sum = el('div', { class: 'toolbar' });
+    sum.innerHTML = '<span class="filechip">미검토 <b>' + fmt(k.보류미검토) + '</b></span><span class="filechip">승인 <b>' + fmt(k.보류승인) + '</b></span><span class="filechip">전체 <b>' + fmt(rows.length) + '</b></span>';
+    card.appendChild(sum);
+    if (!rows.length) {
+      card.appendChild(el('div', { class: 'empty-state', html: '<div class="big">✅</div>현재 직군 변경으로 검토가 필요한 건이 없습니다.<div class="muted" style="margin-top:6px">전직 등으로 현재 직군과 수료 당시 직군이 다른 건이 생기면 여기에 표시됩니다.</div>' }));
+      c.appendChild(card); return;
+    }
+    var cols = [
+      { key: 'ID', label: 'ID' }, { key: '성명', label: '성명' }, { key: '시도', label: '시도' }, { key: '기관명', label: '기관명' },
+      { key: '직군', label: '현재 직군' }, { key: '경력', label: '경력' },
+      { key: '당시직군', label: '당시 직군(수료시)', render: function (v) { return '<b>' + (v || '-') + '</b>'; } },
+      { key: '변경완료과정', label: '수료한 필수과정' },
+      { key: '선택차시', label: '선택차시', num: true, render: function (v, r) { return r.경력 === '경력자' ? v + ' / ' + r.필요차시 : '-'; }, exp: function (v, r) { return r.경력 === '경력자' ? v : ''; } },
+      { key: '승인시이수', label: '승인 시', render: function (v) { return v ? '<span class="pill y">이수</span>' : '<span class="pill g">선택부족</span>'; }, exp: function (v) { return v ? '이수' : '승인해도 선택부족'; } },
+      { key: '보류상태', label: '검토', sortable: false, render: function (v, r) { return statusControl(r); }, exp: function (v) { return v === 'approve' ? '승인' : (v === 'reject' ? '반려' : '미검토'); } }
+    ];
+    var fb = filterBar({ searchKey: 1, searchLabel: '검색(ID·성명·기관)' }, [
+      { key: '상태', label: '검토상태', options: ['미검토', '승인', '반려'] },
+      { key: '시도', label: '시도', options: uniq(rows, '시도') }
+    ], apply);
+    var head = el('div', { class: 'head' });
+    head.appendChild(el('div', { html: '<h2>보류 · 직군변경 검토</h2><p class="desc">건별로 승인/반려하면 이수율 등 통계에 즉시 반영됩니다</p>' }));
+    var expHolder = el('div'); head.appendChild(expHolder);
+    card.appendChild(head); card.appendChild(fb.node);
+    var holder = el('div'); card.appendChild(holder); c.appendChild(card);
+    function statusKo(s) { return s === 'approve' ? '승인' : (s === 'reject' ? '반려' : '미검토'); }
+    function apply() {
+      var q = (fb.sels.__search.value || '').trim().toLowerCase();
+      var filtered = rows.filter(function (r) {
+        if (fb.sels['상태'].value && statusKo(r.보류상태) !== fb.sels['상태'].value) return false;
+        if (fb.sels['시도'].value && r.시도 !== fb.sels['시도'].value) return false;
+        if (q && (String(r.ID).toLowerCase().indexOf(q) < 0 && String(r.성명).toLowerCase().indexOf(q) < 0 && String(r.기관명).toLowerCase().indexOf(q) < 0)) return false;
+        return true;
+      });
+      holder.innerHTML = ''; dataTable(holder, cols, filtered, { pageSize: 50, sortKey: '보류상태', sortDir: 1 });
+      expHolder.innerHTML = ''; expHolder.appendChild(expBtn(filtered, cols, '직군변경_보류검토.xlsx', '엑셀 다운로드(' + fmt(filtered.length) + ')'));
+    }
+    apply();
+  }
+
   function renderCourses(c) {
     var rows = state.result.courseRows;
     var card = el('div', { class: 'card' });
@@ -521,7 +589,8 @@
     var dm = el('div', { class: 'toolbar', style: 'margin-top:12px' });
     var clr = el('button', { class: 'btn sec sm' }, '저장된 회원정보 삭제'); clr.onclick = function () { idbSet('members', null); idbSet('memberMeta', null); state.members = null; state.memberMeta = null; state.result = null; renderTab(); };
     var clrS = el('button', { class: 'btn sec sm' }, '수강데이터 비우기'); clrS.onclick = function () { state.students = []; state.studentFiles = []; state.result = null; renderTab(); };
-    dm.appendChild(clr); dm.appendChild(clrS); help.appendChild(dm);
+    var clrD = el('button', { class: 'btn sec sm' }, '직군변경 검토결정 초기화'); clrD.onclick = function () { if (confirm('직군변경 보류 건의 승인/반려 결정을 모두 초기화할까요?')) { state.decisions = {}; idbSet('decisions', {}); recompute(); } };
+    dm.appendChild(clr); dm.appendChild(clrS); dm.appendChild(clrD); help.appendChild(dm);
     c.appendChild(help);
   }
   function saveAndRecompute() { idbSet('config', state.config); recompute(); }
@@ -543,10 +612,11 @@
     wireDrop('dropStudent', 'fileStudent', function (f) { loadStudentFiles(f, true); });
     $('#btnMember').onclick = function () { $('#fileMember').click(); };
     $('#btnStudent').onclick = function () { $('#fileStudent').click(); };
-    // 저장된 회원정보/설정 복원
-    Promise.all([idbGet('members'), idbGet('memberMeta'), idbGet('config')]).then(function (r) {
+    // 저장된 회원정보/설정/검토결정 복원
+    Promise.all([idbGet('members'), idbGet('memberMeta'), idbGet('config'), idbGet('decisions')]).then(function (r) {
       if (r[0] && r[0].length) { state.members = r[0]; state.memberMeta = r[1]; }
       if (r[2]) state.config = Object.assign(JSON.parse(JSON.stringify(LMS.DEFAULT_CONFIG)), r[2]);
+      if (r[3]) state.decisions = r[3];
       renderStatus(); renderTab();
     });
   }
