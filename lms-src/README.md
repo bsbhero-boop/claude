@@ -1,7 +1,7 @@
 # lms-src — 직무교육 통계 대시보드 소스
 
-`/lms-statistics-v3.html`(단일 HTML 앱)을 생성하는 소스입니다. 일반 사용자는 빌드된
-`lms-statistics-v3.html` 하나만 있으면 되고, 이 폴더는 **수정·재빌드**할 때만 필요합니다.
+`/lms-statistics-v4.html`(단일 HTML 앱)을 생성하는 소스입니다. 일반 사용자는 빌드된
+`lms-statistics-v4.html` 하나만 있으면 되고, 이 폴더는 **수정·재빌드**할 때만 필요합니다.
 
 ## 구성
 
@@ -12,14 +12,14 @@
 | `app.css` | 스타일 |
 | `page.html` | HTML 골격(빌드 시 마커 치환) |
 | `vendor/xlsx.full.min.js` | SheetJS (엑셀 파싱 라이브러리, 오프라인 내장용) |
-| `build.js` | 위 파일들을 합쳐 `../lms-statistics-v3.html` 단일 파일 생성 |
+| `build.js` | 위 파일들을 합쳐 `../lms-statistics-v4.html` 단일 파일 생성 |
 | `e2e.js`, `persist.js` | 실데이터 기반 브라우저 검증 스크립트(Playwright) |
 
 ## 빌드
 
 ```bash
 cd lms-src
-node build.js          # → ../lms-statistics-v3.html 생성
+node build.js          # → ../lms-statistics-v4.html 생성
 ```
 
 `vendor/xlsx.full.min.js`를 base64로 인코딩해 HTML에 내장하므로, 결과 파일은

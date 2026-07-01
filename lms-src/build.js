@@ -4,8 +4,8 @@ const path = require('path');
 const SRC = __dirname;
 const ROOT = path.resolve(__dirname, '..');
 
-const VERSION = 'ver3';
-const OUT_NAME = 'lms-statistics-v3.html';
+const VERSION = 'ver4';
+const OUT_NAME = 'lms-statistics-v4.html';
 
 const css = fs.readFileSync(path.join(SRC, 'app.css'), 'utf8');
 const compute = fs.readFileSync(path.join(SRC, 'compute.js'), 'utf8');

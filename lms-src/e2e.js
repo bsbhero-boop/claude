@@ -1,7 +1,7 @@
 const { chromium } = require('playwright');
 const path = require('path');
 const UP = '/root/.claude/uploads/cd57ac93-8f4d-5823-bb34-c33379307f24/';
-const HTML = 'file://' + path.resolve(__dirname, '..', 'lms-statistics-v3.html');
+const HTML = 'file://' + path.resolve(__dirname, '..', 'lms-statistics-v4.html');
 const MEMBER = UP + 'd7a572fb-____.xlsx';
 const STUDENTS = ['4ecf5ad8-__________20260626.____2.xls', '186cd960-__________20260626.____3.xls', '835ae5a9-__________20260626.____4.xls'].map(f => UP + f);
 
