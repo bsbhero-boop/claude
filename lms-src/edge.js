@@ -46,15 +46,16 @@ function wire(page, errs) {
     await p.waitForFunction(() => window.__LMS_APP && window.__LMS_APP.members, null, { timeout: 60000 });
     await p.setInputFiles('#fileStudent', S1);
     await p.waitForFunction(() => window.__LMS_APP && window.__LMS_APP.result, null, { timeout: 60000 });
-    const a = await p.evaluate(() => ({ rows: window.__LMS_APP.students.length, kpi: window.__LMS_APP.result.kpi }));
-    // 같은 파일 다시 드롭(append)
+    const a = await p.evaluate(() => ({ rows: window.__LMS_APP.students.length, files: window.__LMS_APP.studentFiles.length, kpi: window.__LMS_APP.result.kpi }));
+    // 같은 파일 다시 드롭 → 완전동일 행이라 자동 제거되어 행수/통계 그대로여야
     await p.setInputFiles('#fileStudent', S1);
-    await p.waitForTimeout(300);
-    await p.waitForFunction((prev) => window.__LMS_APP.students.length > prev, a.rows, { timeout: 60000 });
-    const c = await p.evaluate(() => ({ rows: window.__LMS_APP.students.length, kpi: window.__LMS_APP.result.kpi }));
-    const sameKpi = a.kpi.이수자 === c.kpi.이수자 && a.kpi.미응시연인원 === c.kpi.미응시연인원 && a.kpi.대상자 === c.kpi.대상자;
-    console.log('CASE2 중복드롭: 행수', a.rows, '→', c.rows, '| 이수자', a.kpi.이수자, '→', c.kpi.이수자, sameKpi ? '✅ KPI 불변' : '❌ KPI 변동');
-    if (!sameKpi || errs.length) { pass = false; console.log('  errs:', errs.slice(0, 3)); }
+    await p.waitForFunction((f) => window.__LMS_APP.studentFiles.length > f, a.files, { timeout: 60000 });
+    await p.waitForTimeout(400);
+    const c = await p.evaluate(() => ({ rows: window.__LMS_APP.students.length, dup: window.__LMS_APP.dupRemoved, kpi: window.__LMS_APP.result.kpi }));
+    const rowsSame = a.rows === c.rows;
+    const sameKpi = a.kpi.이수자 === c.kpi.이수자 && a.kpi.중복수료건수 === c.kpi.중복수료건수 && a.kpi.대상자 === c.kpi.대상자;
+    console.log('CASE2 같은파일 재업로드: 행수', a.rows, '→', c.rows, rowsSame ? '(동일=중복제거됨)' : '⚠️증가', '| 이수자', a.kpi.이수자, '→', c.kpi.이수자, '| 중복이수', a.kpi.중복수료건수, '→', c.kpi.중복수료건수, (sameKpi && rowsSame) ? '✅' : '❌');
+    if (!sameKpi || !rowsSame || errs.length) { pass = false; console.log('  errs:', errs.slice(0, 3)); }
     await b.close();
   }
 

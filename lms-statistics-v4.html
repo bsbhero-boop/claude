@@ -579,6 +579,16 @@ kbd{background:#f0f2f7;border:1px solid #dde2ec;border-bottom-width:2px;border-r
 
   // 필요한 학생 컬럼만 보관(메모리 절약)
   var SCOLS = ['카테고리', '과정명', '교육차시', '교육신청일', '진도율', '점수', '수료여부', '수료일', '상태', 'ID', '성명', '기관코드', '기관명', '시도', '시군구', '사용자유형', '자격번호', '연도/차수'];
+  // 모든 열이 완전히 동일한 행 제거(같은 파일 중복 업로드/원본 중복행 방지)
+  function dedupeRows(rows) {
+    var seen = new Set(), out = []; var SEP = String.fromCharCode(1);
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i], s = '';
+      for (var c = 0; c < SCOLS.length; c++) { var v = r[SCOLS[c]]; s += (v == null ? '' : v) + SEP; }
+      if (!seen.has(s)) { seen.add(s); out.push(r); }
+    }
+    return out;
+  }
   var MCOLS = ['No', '시도', '시군구', '읍면동', '기관코드', '기관명', '성명', 'ID', '사용자유형', '권한관리자', '일반', '중점', '특화', '퇴원', '고도화', '선임여부', '교육대상여부', '교육구분', '상태'];
 
   var state = {
@@ -682,6 +692,10 @@ kbd{background:#f0f2f7;border:1px solid #dde2ec;border-bottom-width:2px;border-r
     });
     return chain.then(function () {
       if (state.students.length && !('과정명' in state.students[0])) { hideOv(); alert('이 파일은 수강생목록(온라인통합수강생목록)이 아닌 것 같습니다.\n‘과정명’ 열을 찾지 못했습니다. 올바른 원데이터 파일인지 확인해 주세요.'); }
+      setOv('중복 행 정리 중...', '', 88);
+      var before = state.students.length;
+      state.students = dedupeRows(state.students);        // 완전 동일 행 제거(중복 업로드/원본 중복행)
+      state.dupRemoved = before - state.students.length;
       state.coverage = state.students.length ? LMS.coverage(state.students) : null;
       setOv('통계 집계 중...', state.students.length.toLocaleString() + '행', 92); return tick();
     })
@@ -712,6 +726,7 @@ kbd{background:#f0f2f7;border:1px solid #dde2ec;border-bottom-width:2px;border-r
     if (state.studentFiles.length) {
       sb.appendChild(el('div', { class: 'stat' })).innerHTML = '수강데이터 <b>' + fmt(state.students.length) + '행</b> · ' + state.studentFiles.length + '개 파일';
       if (state.coverage) sb.appendChild(el('div', { class: 'stat' })).innerHTML = '데이터 ' + (state.coverage.summary.연도.join('·') || '') + '년 <b>최신 ' + state.coverage.summary.최신차수 + '차</b>';
+      if (state.dupRemoved) sb.appendChild(el('div', { class: 'stat' })).innerHTML = '중복행 <b>' + fmt(state.dupRemoved) + '건</b> 자동제거';
     } else sb.appendChild(el('div', { class: 'stat empty' }, '수강데이터 미등록'));
     if (state.result) sb.appendChild(el('div', { class: 'stat' })).innerHTML = '전체 이수율 <b>' + pct(state.result.kpi.이수율) + '</b>';
   }
@@ -1059,7 +1074,8 @@ kbd{background:#f0f2f7;border:1px solid #dde2ec;border-bottom-width:2px;border-r
     var card = el('div', { class: 'card' });
     var note = el('div', { class: 'note' });
     note.innerHTML = '<b>하나의 ID</b>가 <b>같은 교육과정을 2회 이상 수료</b>한 건입니다(예: 같은 필수 과정을 서로 다른 차수에서 중복 수료). ' +
-      'ID는 본인인증 기반 고유값이므로 동명이인·중복계정 문제는 없으며, 여기서는 <b>같은 과정의 중복 이수</b>만 점검합니다.';
+      'ID는 본인인증 기반 고유값이므로 동명이인·중복계정 문제는 없으며, 여기서는 <b>같은 과정의 중복 이수</b>만 점검합니다. ' +
+      '<b>완전히 동일한 행(같은 파일 중복 업로드·원본 중복행)은 자동 제거</b>되므로, 여기 표시되는 건은 실제로 서로 다른 이수 기록입니다.';
     card.appendChild(note);
     var sum = el('div', { class: 'toolbar' });
     sum.innerHTML = '<span class="filechip">중복 수료 건수 <b>' + fmt(k.중복수료건수) + '</b></span><span class="filechip">해당 인원(ID) <b>' + fmt(k.중복수료인원) + '</b></span><span class="filechip">필수 <b>' + fmt(k.중복수료필수) + '</b></span><span class="filechip">선택 <b>' + fmt(k.중복수료선택) + '</b></span>';
@@ -1202,6 +1218,7 @@ kbd{background:#f0f2f7;border:1px solid #dde2ec;border-bottom-width:2px;border-r
       '교육신청일 <b>' + (s.최초신청일 || '-') + ' ~ ' + (s.최근신청일 || '-') + '</b>. ' +
       '(과정 유형별로 진행 차수가 달라, 아래 표에서 과정별 최신 차수를 확인하세요.)';
     c.appendChild(note);
+    if (state.dupRemoved) { var nd = el('div', { class: 'note' }); nd.innerHTML = '완전히 동일한 <b>중복 행 ' + fmt(state.dupRemoved) + '건</b>이 자동 제거되었습니다(같은 파일 중복 업로드 또는 원본 중복행). 위 행수는 제거 후 기준입니다.'; c.appendChild(nd); }
     // 업로드 파일
     if (state.studentFiles.length) {
       var fc = el('div', { class: 'card' });
@@ -1357,7 +1374,7 @@ kbd{background:#f0f2f7;border:1px solid #dde2ec;border-bottom-width:2px;border-r
       '<div class="note info" style="margin:0">모든 처리는 이 PC의 브라우저 안에서만 이루어지며, 어떤 데이터도 외부로 전송되지 않습니다.</div>';
     var dm = el('div', { class: 'toolbar', style: 'margin-top:12px' });
     var clr = el('button', { class: 'btn sec sm' }, '저장된 회원정보 삭제'); clr.onclick = function () { idbSet('members', null); idbSet('memberMeta', null); state.members = null; state.memberMeta = null; state.result = null; renderTab(); };
-    var clrS = el('button', { class: 'btn sec sm' }, '수강데이터 비우기'); clrS.onclick = function () { state.students = []; state.studentFiles = []; state.result = null; state.coverage = null; renderTab(); };
+    var clrS = el('button', { class: 'btn sec sm' }, '수강데이터 비우기'); clrS.onclick = function () { state.students = []; state.studentFiles = []; state.result = null; state.coverage = null; state.dupRemoved = 0; renderTab(); };
     var clrD = el('button', { class: 'btn sec sm' }, '직군변경 검토결정 초기화'); clrD.onclick = function () { if (confirm('직군변경 보류 건의 승인/반려 결정을 모두 초기화할까요?')) { state.decisions = {}; idbSet('decisions', {}); recompute(); } };
     dm.appendChild(clr); dm.appendChild(clrS); dm.appendChild(clrD); help.appendChild(dm);
     c.appendChild(help);
