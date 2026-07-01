@@ -90,6 +90,7 @@
     // perID: { pil:Set("경력|직군"), sel:Set(subject), selRetake, examNoShow:[], subjAny:Set, subjDone:Set }
     var perID = new Map();
     var courseAgg = new Map(); // 과정명 → {enroll:Set(id), done:Set(id), cat}
+    var dupComp = new Map();   // (ID§과정명) → 수료 기록들 (같은 ID가 같은 과정을 2회+ 수료했는지)
     var unknownChasi = {};     // 매핑 안된 선택 과목명 집계
     var skippedCancel = 0;
 
@@ -115,6 +116,14 @@
       var ca = courseAgg.get(name);
       if (!ca) { ca = { enroll: new Set(), done: new Set(), cat: cat }; courseAgg.set(name, ca); }
       ca.enroll.add(id); if (done) ca.done.add(id);
+
+      // 중복 이수: 같은 ID가 같은 과정을 2회 이상 '수료'했는지
+      if (done) {
+        var dk = id + '§' + name;
+        var gg = dupComp.get(dk);
+        if (!gg) { gg = { ID: id, 성명: S(r['성명']), 기관명: S(r['기관명']), 시도: S(r['시도']), 직군: S(r['사용자유형']), 과정명: name, 카테고리: cat, recs: [] }; dupComp.set(dk, gg); }
+        gg.recs.push({ 연도차수: S(r['연도/차수']), 수료일: S(r['수료일']) });
+      }
 
       if (cat === '직무교육(필수)') {
         var pm = pilMeta(name);
@@ -280,26 +289,24 @@
     // 직군변경 보류 후보 (기준정의 대상)
     var pendingRows = persons.filter(function (p) { return p.기준정의 && p.보류후보; });
 
-    // 중복자 확인: 같은 (성명+기관코드)인데 ID가 여러 개 = 동일인 중복계정 의심
-    var dupMap = new Map();
-    persons.forEach(function (p) {
-      var code = S(p.기관코드);
-      if (!p.성명 || !code || code === '\\N') return;
-      var key = p.성명 + '|' + code;
-      var g = dupMap.get(key); if (!g) { g = []; dupMap.set(key, g); } g.push(p);
-    });
-    var duplicateRows = []; var dupGroupCnt = 0, dupPersonCnt = 0, dupCompletedGroups = 0;
-    dupMap.forEach(function (g, key) {
-      if (g.length < 2) return;
-      dupGroupCnt++; dupPersonCnt += g.length;
-      var doneCnt = g.filter(function (x) { return x.이수; }).length;
-      if (doneCnt >= 2) dupCompletedGroups++;
-      g.forEach(function (p) {
-        duplicateRows.push({ 그룹: key, 성명: p.성명, 시도: p.시도, 기관명: p.기관명, 기관코드: p.기관코드, ID: p.ID, 직군: p.직군, 경력: p.경력,
-          이수: p.이수, 수강기록: p.수강기록, 그룹인원: g.length, 그룹이수자: doneCnt });
+    // 중복 이수 확인: 하나의 ID가 같은 교육과정을 2회 이상 '수료'한 경우
+    // (ID는 본인인증 고유값이므로 동명이인 문제 없음. 같은 과정 중복 수료만 점검)
+    var duplicateRows = []; var dupIDs = {}; var dupReq = 0, dupSel = 0;
+    dupComp.forEach(function (g) {
+      if (g.recs.length < 2) return;
+      var per = personByID.get(g.ID) || {};
+      dupIDs[g.ID] = 1;
+      if (g.카테고리 === '직무교육(필수)') dupReq++; else if (g.카테고리 === '직무교육(선택)') dupSel++;
+      duplicateRows.push({
+        ID: g.ID, 성명: per.성명 || g.성명, 시도: per.시도 || g.시도, 기관명: per.기관명 || g.기관명,
+        직군: per.직군 || g.직군, 과정명: g.과정명, 카테고리: g.카테고리, 수료횟수: g.recs.length,
+        차수: g.recs.map(function (x) { return x.연도차수; }).join(', '),
+        수료일: g.recs.map(function (x) { return x.수료일; }).filter(Boolean).join(', '),
+        직무교육이수: !!per.이수, 교육대상: !!per.기준정의
       });
     });
-    duplicateRows.sort(function (a, b) { return a.그룹 === b.그룹 ? 0 : (a.그룹 < b.그룹 ? -1 : 1); });
+    duplicateRows.sort(function (a, b) { return b.수료횟수 - a.수료횟수 || (a.ID < b.ID ? -1 : 1); });
+    var dupPersonCnt = Object.keys(dupIDs).length;
 
     // KPI
     var ruleP = persons.filter(function (p) { return p.기준정의; });
@@ -316,7 +323,7 @@
       지역외제외: regionExcluded,
       보류미검토: pendingRows.filter(function (p) { return p.보류상태 === 'pending'; }).length,
       보류승인: pendingRows.filter(function (p) { return p.보류상태 === 'approve'; }).length,
-      중복의심그룹: dupGroupCnt, 중복의심인원: dupPersonCnt, 중복이수그룹: dupCompletedGroups
+      중복수료건수: duplicateRows.length, 중복수료인원: dupPersonCnt, 중복수료필수: dupReq, 중복수료선택: dupSel
     };
 
     return {

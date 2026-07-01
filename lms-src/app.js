@@ -492,40 +492,39 @@
     var k = state.result.kpi;
     var card = el('div', { class: 'card' });
     var note = el('div', { class: 'note' });
-    note.innerHTML = '같은 <b>성명 + 기관코드</b>인데 ID가 2개 이상인 건(동일인이 계정을 중복 생성했을 가능성). ' +
-      '특히 <b>그룹 내 이수자가 2명 이상</b>이면 한 사람이 이수자로 <b>중복 집계</b>되었을 수 있으니 확인이 필요합니다.';
+    note.innerHTML = '<b>하나의 ID</b>가 <b>같은 교육과정을 2회 이상 수료</b>한 건입니다(예: 같은 필수 과정을 서로 다른 차수에서 중복 수료). ' +
+      'ID는 본인인증 기반 고유값이므로 동명이인·중복계정 문제는 없으며, 여기서는 <b>같은 과정의 중복 이수</b>만 점검합니다.';
     card.appendChild(note);
     var sum = el('div', { class: 'toolbar' });
-    sum.innerHTML = '<span class="filechip">중복의심 그룹 <b>' + fmt(k.중복의심그룹) + '</b></span><span class="filechip">관련 인원 <b>' + fmt(k.중복의심인원) + '</b></span><span class="filechip">이수자 2명+ 그룹 <b>' + fmt(k.중복이수그룹) + '</b></span>';
+    sum.innerHTML = '<span class="filechip">중복 수료 건수 <b>' + fmt(k.중복수료건수) + '</b></span><span class="filechip">해당 인원(ID) <b>' + fmt(k.중복수료인원) + '</b></span><span class="filechip">필수 <b>' + fmt(k.중복수료필수) + '</b></span><span class="filechip">선택 <b>' + fmt(k.중복수료선택) + '</b></span>';
     card.appendChild(sum);
-    if (!rows.length) { card.appendChild(el('div', { class: 'empty-state', html: '<div class="big">✅</div>중복 의심 건이 없습니다.' })); c.appendChild(card); return; }
+    if (!rows.length) { card.appendChild(el('div', { class: 'empty-state', html: '<div class="big">✅</div>같은 과정을 2회 이상 수료한 중복 건이 없습니다.' })); c.appendChild(card); return; }
     var cols = [
-      { key: '성명', label: '성명' }, { key: '시도', label: '시도' }, { key: '기관명', label: '기관명' }, { key: '기관코드', label: '기관코드' },
-      { key: 'ID', label: 'ID' }, { key: '직군', label: '직군' }, { key: '경력', label: '경력' },
-      { key: '이수', label: '이수', render: function (v) { return yn(v); }, exp: function (v) { return v ? '이수' : '미이수'; } },
-      { key: '수강기록', label: '수강기록', render: function (v) { return v ? '있음' : '<span class="muted">없음</span>'; }, exp: function (v) { return v ? '있음' : '없음'; } },
-      { key: '그룹인원', label: '그룹인원', num: true },
-      { key: '그룹이수자', label: '그룹내 이수자', num: true, render: function (v) { return v >= 2 ? '<span class="pill g">' + v + '</span>' : '' + v; }, exp: function (v) { return v; } }
+      { key: 'ID', label: 'ID' }, { key: '성명', label: '성명' }, { key: '시도', label: '시도' }, { key: '기관명', label: '기관명' }, { key: '직군', label: '직군' },
+      { key: '카테고리', label: '구분' }, { key: '과정명', label: '중복 수료 과정' },
+      { key: '수료횟수', label: '수료횟수', num: true, render: function (v) { return '<span class="pill g">' + v + '회</span>'; }, exp: function (v) { return v; } },
+      { key: '차수', label: '수료 차수' }, { key: '수료일', label: '수료일' },
+      { key: '직무교육이수', label: '직무교육 이수', render: function (v) { return yn(v); }, exp: function (v) { return v ? '이수' : '미이수'; } }
     ];
-    var fb = filterBar({ searchKey: 1, searchLabel: '검색(성명·기관·ID)' }, [
-      { key: '시도', label: '시도', options: uniq(rows, '시도') },
-      { key: '이수중복', label: '이수자 2명+ 그룹만', options: ['중복집계 의심만'] }
+    var fb = filterBar({ searchKey: 1, searchLabel: '검색(ID·성명·기관·과정)' }, [
+      { key: '카테고리', label: '구분', options: uniq(rows, '카테고리') },
+      { key: '시도', label: '시도', options: uniq(rows, '시도') }
     ], apply);
     var head = el('div', { class: 'head' });
-    head.appendChild(el('div', { html: '<h2>중복자 확인</h2><p class="desc">동일인 중복계정 의심 — 같은 성명·기관코드, ID 2개 이상</p>' }));
+    head.appendChild(el('div', { html: '<h2>중복자 확인 (같은 과정 중복 이수)</h2><p class="desc">하나의 ID가 동일 과정을 2회 이상 수료한 건</p>' }));
     var expHolder = el('div'); head.appendChild(expHolder);
     card.appendChild(head); card.appendChild(fb.node);
     var holder = el('div'); card.appendChild(holder); c.appendChild(card);
     function apply() {
       var q = (fb.sels.__search.value || '').trim().toLowerCase();
       var filtered = rows.filter(function (r) {
+        if (fb.sels['카테고리'].value && r.카테고리 !== fb.sels['카테고리'].value) return false;
         if (fb.sels['시도'].value && r.시도 !== fb.sels['시도'].value) return false;
-        if (fb.sels['이수중복'].value && r.그룹이수자 < 2) return false;
-        if (q && (String(r.성명).toLowerCase().indexOf(q) < 0 && String(r.기관명).toLowerCase().indexOf(q) < 0 && String(r.ID).toLowerCase().indexOf(q) < 0)) return false;
+        if (q && (String(r.ID).toLowerCase().indexOf(q) < 0 && String(r.성명).toLowerCase().indexOf(q) < 0 && String(r.기관명).toLowerCase().indexOf(q) < 0 && String(r.과정명).toLowerCase().indexOf(q) < 0)) return false;
         return true;
       });
-      holder.innerHTML = ''; dataTable(holder, cols, filtered, { pageSize: 50, sortKey: '그룹이수자' });
-      expHolder.innerHTML = ''; expHolder.appendChild(expBtn(filtered, cols, '중복자확인.xlsx', '엑셀 다운로드(' + fmt(filtered.length) + ')'));
+      holder.innerHTML = ''; dataTable(holder, cols, filtered, { pageSize: 50, sortKey: '수료횟수' });
+      expHolder.innerHTML = ''; expHolder.appendChild(expBtn(filtered, cols, '중복이수_확인.xlsx', '엑셀 다운로드(' + fmt(filtered.length) + ')'));
     }
     apply();
   }

@@ -59,14 +59,15 @@ const STUDENTS = ['4ecf5ad8-__________20260626.____2.xls', '186cd960-__________2
       재응시필요: R.kpi.재응시필요인원,
       이수자중재응시: exam.filter(e => e.전체이수 && e.재응시필요).length, // 0이어야
       차수있음: exam.filter(e => e.차수 != null).length,
-      중복그룹: R.kpi.중복의심그룹, 중복인원: R.kpi.중복의심인원, 중복이수그룹: R.kpi.중복이수그룹,
-      dupRows: R.duplicateRows.length
+      중복건수: R.kpi.중복수료건수, 중복인원: R.kpi.중복수료인원, 중복필수: R.kpi.중복수료필수,
+      dupRows: R.duplicateRows.length,
+      dupBad: R.duplicateRows.filter(d => d.수료횟수 < 2).length // 0이어야 (모두 2회+)
     };
   });
   console.log('재응시필요(이수자 제외):', v3.재응시필요, '| 이수자인데 재응시필요:', v3.이수자중재응시, v3.이수자중재응시 === 0 ? '✅' : '❌',
     '| 차수부여:', v3.차수있음 > 0 ? '✅' : '❌');
-  console.log('중복자: 그룹', v3.중복그룹, '인원', v3.중복인원, '이수2명+그룹', v3.중복이수그룹, (v3.중복그룹 > 0 && v3.dupRows === v3.중복인원) ? '✅' : '❌');
-  if (v3.이수자중재응시 !== 0 || !(v3.차수있음 > 0) || !(v3.중복그룹 > 0)) ok = false;
+  console.log('중복이수: 건수', v3.중복건수, '인원', v3.중복인원, '필수', v3.중복필수, (v3.중복건수 > 0 && v3.dupRows === v3.중복건수 && v3.dupBad === 0) ? '✅' : '❌');
+  if (v3.이수자중재응시 !== 0 || !(v3.차수있음 > 0) || !(v3.중복건수 > 0) || v3.dupBad !== 0) ok = false;
 
   for (const label of ['데이터 현황', '이수율 현황', '미이수자 명단', '미응시·재응시', '보류·직군변경', '중복자 확인', '과목별 현황', '개인 조회', '설정·도움말', '요약']) {
     await page.click(`button.tab:has-text("${label}")`);
