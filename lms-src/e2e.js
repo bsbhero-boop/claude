@@ -7,7 +7,8 @@ const STUDENTS = ['4ecf5ad8-__________20260626.____2.xls', '186cd960-__________2
 
 (async () => {
   const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
-  const page = await browser.newPage();
+  const context = await browser.newContext({ acceptDownloads: true });
+  const page = await context.newPage();
   const errors = [];
   page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
   page.on('pageerror', e => errors.push('PAGEERROR: ' + e.message));
@@ -102,6 +103,27 @@ const STUDENTS = ['4ecf5ad8-__________20260626.____2.xls', '186cd960-__________2
   await page.waitForTimeout(200);
   const personOK = await page.$eval('#content', n => n.textContent.includes('수강 이력')).catch(() => false);
   console.log('개인조회(k80love) 이력표시:', personOK);
+
+  // 진단 데이터 내보내기 검증 (원인 파악용 공유 파일)
+  const fs = require('fs'); const os = require('os');
+  const [dl] = await Promise.all([
+    page.waitForEvent('download', { timeout: 10000 }),
+    page.click('#content button:has-text("진단 데이터 내보내기")')
+  ]);
+  const dp = path.join(os.tmpdir(), dl.suggestedFilename()); await dl.saveAs(dp);
+  const diag = JSON.parse(fs.readFileSync(dp, 'utf8'));
+  const diagOK = !!(diag.판정결과 && diag.회원정보 && Array.isArray(diag.수강이력) && diag.적용규칙);
+  console.log('진단 내보내기:', dl.suggestedFilename(), '| 구조', diagOK ? '✅' : '❌', '| 이력', diag.수강이력.length + '건', '| 사유:', diag.판정결과.미이수사유 || '(이수)');
+  if (!diagOK) ok = false;
+  const [dl2] = await Promise.all([
+    page.waitForEvent('download', { timeout: 10000 }),
+    page.click('#content button:has-text("진단(개인정보 가림)")')
+  ]);
+  const dp2 = path.join(os.tmpdir(), dl2.suggestedFilename()); await dl2.saveAs(dp2);
+  const diag2 = JSON.parse(fs.readFileSync(dp2, 'utf8'));
+  const masked = diag2.회원정보.ID === 'MASKED-ID' && diag2.회원정보.성명 === '***' && !!diag2.판정결과.직군_정규화;
+  console.log('진단 마스킹:', masked ? '✅ 이름·ID·기관 가림, 판정정보 유지' : '❌');
+  if (!masked) ok = false;
 
   // 요약 탭 이수율 현황표: 전담 배정인원 입력 → A/B 계산 + 저장 확인
   await page.click('button.tab:has-text("요약")'); await page.waitForTimeout(150);

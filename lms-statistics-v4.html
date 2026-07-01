@@ -768,6 +768,37 @@ kbd{background:#f0f2f7;border:1px solid #dde2ec;border-bottom-width:2px;border-r
   }
   function expBtn(rows, columns, filename, label) { var b = el('button', { class: 'btn sec sm' }, label || '엑셀 다운로드'); b.onclick = function () { if (!rows.length) { alert('내보낼 데이터가 없습니다.'); return; } exportRows(rows, columns, filename); }; return b; }
 
+  // 한 사람(ID)의 이수 판정 진단 데이터(작은 JSON) 내보내기 — 원인 파악용 공유
+  function exportPersonDiag(p, recs, mask) {
+    var mem = null, mid = p.ID;
+    if (state.members) { for (var i = 0; i < state.members.length; i++) { if (String(state.members[i].ID).trim() === mid) { mem = state.members[i]; break; } } }
+    mem = mem || {};
+    function mk(v) { return mask ? '***' : (v == null ? '' : v); }
+    var relChasi = {};
+    recs.forEach(function (r) { if (String(r['카테고리']) === '직무교육(선택)') { var b = LMS.selBase(r['과정명']); relChasi[b] = (state.config.chasi && state.config.chasi[b] != null) ? state.config.chasi[b] : '(미매핑=0)'; } });
+    var out = {
+      도구버전: 'ver4', 생성시각: new Date().toISOString(), 개인정보가림: !!mask,
+      판정결과: {
+        이수: p.이수, 미이수사유: p.사유 || '', 필수수료: p.필수수료,
+        선택차시합계: p.선택차시, 필요선택차시: p.필요차시,
+        직군_현재: p.직군, 직군_정규화: p.직군정규화, 경력구분: p.경력, 기준정의: p.기준정의,
+        보류후보: p.보류후보, 보류상태: p.보류상태, 당시직군: p.당시직군 || '', 승인시이수: p.승인시이수
+      },
+      회원정보: {
+        ID: mask ? 'MASKED-ID' : mid, 성명: mk(p.성명),
+        시도: p.시도, 시군구: p.시군구, 기관코드: mask ? '***' : (mem['기관코드'] || ''), 기관명: mk(mem['기관명']),
+        사용자유형: mem['사용자유형'] || '', 교육구분: mem['교육구분'] || '', 교육대상여부: mem['교육대상여부'] || '', 회원상태: mem['상태'] || '', 선임여부: mem['선임여부'] || ''
+      },
+      적용규칙: { 경력자_선택차시기준: state.config.thresholds, 대상시도: state.config.allowedSido, 이_사람_선택과목_차시: relChasi },
+      수강이력: recs.map(function (r) {
+        return { 카테고리: r['카테고리'], 과정명: r['과정명'], 연도차수: r['연도/차수'] || '', 교육차시: r['교육차시'], 진도율: r['진도율'], 점수: r['점수'], 수료여부: r['수료여부'], 수료일: r['수료일'], 상태: r['상태'], 당시사용자유형: r['사용자유형'] };
+      })
+    };
+    var blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
+    var a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = '진단_' + (mask ? 'masked' : mid) + '.json'; document.body.appendChild(a); a.click(); a.remove();
+  }
+
   /* ---------- 탭 렌더 ------------------------------------------------- */
   var TABS = [
     ['summary', '요약'], ['coverage', '데이터 현황'], ['rates', '이수율 현황'], ['notdone', '미이수자 명단'],
@@ -1308,7 +1339,15 @@ kbd{background:#f0f2f7;border:1px solid #dde2ec;border-bottom-width:2px;border-r
         { key: '수료여부', label: '수료', render: function (v) { return v === '수료' ? '<span class="pill y">수료</span>' : '<span class="pill n">' + (v || '-') + '</span>'; } },
         { key: '수료일', label: '수료일' }, { key: '상태', label: '상태' }
       ];
-      var h = el('div', { class: 'head' }); h.appendChild(el('h2', {}, '수강 이력 (' + recs.length + '건)')); h.appendChild(expBtn(recs, cols, p.ID + '_수강이력.xlsx')); res.appendChild(h);
+      var h = el('div', { class: 'head' });
+      h.appendChild(el('h2', {}, '수강 이력 (' + recs.length + '건)'));
+      var btns = el('div');
+      btns.appendChild(expBtn(recs, cols, p.ID + '_수강이력.xlsx'));
+      var db = el('button', { class: 'btn sm', style: 'margin-left:6px' }, '진단 데이터 내보내기'); db.onclick = function () { exportPersonDiag(p, recs, false); };
+      var dbm = el('button', { class: 'btn sec sm', style: 'margin-left:6px' }, '진단(개인정보 가림)'); dbm.onclick = function () { exportPersonDiag(p, recs, true); };
+      btns.appendChild(db); btns.appendChild(dbm);
+      h.appendChild(btns); res.appendChild(h);
+      res.appendChild(el('p', { class: 'hint', style: 'margin:4px 0 8px' }, '※ 판정이 이상한 인원은 “진단 데이터 내보내기”로 저장한 작은 파일(JSON)을 전달해 주시면 원인을 확인할 수 있습니다. 개인정보가 걱정되면 “진단(개인정보 가림)”을 사용하세요 — 이름·ID·기관명이 가려지고 판정에 필요한 정보만 담깁니다.'));
       var holder = el('div'); res.appendChild(holder); dataTable(holder, cols, recs, { pageSize: 50, sortKey: '카테고리', sortDir: 1 });
     }
     btn.onclick = go; inp.onkeydown = function (e) { if (e.key === 'Enter') go(); };
