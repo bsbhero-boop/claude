@@ -32,6 +32,8 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 /* ---------- 화면 전환 ---------- */
 .screen { display: none; position: fixed; inset: 0; overflow-y: auto; background: var(--sky); }
 .screen.active { display: block; animation: fadeIn 0.35s ease; }
+/* id 선택자(#screen-start 등)가 .screen 규칙보다 우선하므로, 비활성 화면은 확실히 숨긴다 */
+.screen:not(.active) { display: none !important; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
 /* ---------- 공용 버튼 ---------- */
@@ -98,7 +100,7 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
  * 메인 메뉴
  * ====================================================== */
 #screen-menu { padding: 22px 18px calc(30px + var(--safe-bottom)); }
-.menu-head { display: flex; align-items: center; gap: 14px; max-width: 860px; margin: 0 auto 22px; }
+.menu-head { display: flex; align-items: center; gap: 14px; max-width: 860px; margin: 0 auto 22px; padding-right: 88px; }
 .menu-head h2 { color: var(--navy); font-size: 24px; letter-spacing: -0.5px; }
 .menu-head p { color: var(--muted); font-size: 13.5px; margin-top: 2px; }
 
@@ -143,7 +145,7 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 .sim-head {
   position: absolute; top: 0; left: 0; right: 0;
   display: flex; align-items: center; gap: 12px;
-  padding: 14px 16px; pointer-events: none;
+  padding: 14px 104px 14px 16px; pointer-events: none;
 }
 .sim-head .icon-btn { pointer-events: auto; }
 .sim-head h2 {
@@ -416,11 +418,146 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 .record-row b { color: var(--text); text-align: right; line-height: 1.5; }
 .record-next { color: var(--muted); font-size: 13.5px; line-height: 1.6; margin-bottom: 14px; }
 
+/* ========================================================
+ * 전역 읽어주기(TTS) 버튼 · 모드 토글
+ * ====================================================== */
+.tts-global {
+  position: fixed; top: 10px; right: 10px; z-index: 100;
+  background: rgba(255, 255, 255, 0.96); color: var(--navy);
+  font-size: 13.5px; font-weight: 800; padding: 9px 14px; border-radius: 999px;
+  box-shadow: var(--shadow); border: 2px solid transparent; line-height: 1;
+}
+.tts-global.on { background: var(--blue); color: #fff; border-color: var(--blue-dark); }
+.tts-global:active { transform: scale(0.95); }
+
+.mode-row {
+  max-width: 860px; margin: -8px auto 18px; display: flex; align-items: center;
+  gap: 12px; flex-wrap: wrap;
+}
+.mode-toggle {
+  flex: none; background: #eafaf0; color: #15803d; border: 2px solid #bbe8ca;
+  font-size: 14px; font-weight: 800; padding: 9px 16px; border-radius: 999px;
+}
+.mode-toggle.assess { background: #fff1e6; color: #b45309; border-color: #f8cf9e; }
+.mode-toggle:active { transform: scale(0.96); }
+.mode-hint { font-size: 12.8px; color: var(--muted); font-weight: 600; line-height: 1.4; flex: 1; min-width: 180px; }
+
+.menu-head > div { flex: 1; min-width: 0; }
+.menu-sub {
+  max-width: 860px; margin: 30px auto 12px; color: var(--navy); font-size: 17px;
+  letter-spacing: -0.3px; padding-left: 2px; display: flex; align-items: center; gap: 8px;
+}
+.menu-sub::before { content: ""; width: 4px; height: 18px; background: var(--orange); border-radius: 2px; }
+
+/* ---------- 8개 모듈 카드 ---------- */
+.mod-card {
+  position: relative; text-align: left; background: #fff; border-radius: var(--radius);
+  padding: 18px 16px 16px 52px; box-shadow: var(--shadow); border: 2px solid transparent;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+.mod-card:hover { transform: translateY(-3px); border-color: var(--blue); }
+.mod-card:active { transform: scale(0.98); }
+.mod-card .menu-icon { font-size: 30px; margin-bottom: 6px; }
+.mod-card h3 { font-size: 17px; color: var(--navy); margin-bottom: 4px; letter-spacing: -0.4px; }
+.mod-card p { font-size: 13px; color: var(--muted); line-height: 1.5; }
+.mod-card-em { border-color: #f8cf9e; background: linear-gradient(180deg, #fff 60%, #fff6ec 100%); }
+.mod-card-em .menu-step { background: var(--red); }
+.mod-card-em:hover { border-color: var(--red); }
+
+.menu-card-wide { grid-column: 1 / -1; padding-left: 20px; display: flex; flex-direction: column; }
+.menu-card-wide .menu-icon { font-size: 30px; }
+
+/* ---------- 모듈 진행 패널(3D 하단 시트) ---------- */
+.mod-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.mod-badge { background: #eef2ff; color: var(--blue-dark); font-size: 12.5px; font-weight: 800; padding: 5px 12px; border-radius: 999px; }
+.mod-step { font-size: 13px; font-weight: 800; color: var(--muted); }
+.mod-goal {
+  background: #eef7ff; border: 1.5px solid #cfe4fb; border-radius: 12px;
+  padding: 12px 14px; font-size: 14px; line-height: 1.55; color: #1e3a8a; margin-bottom: 12px;
+}
+.scene-say {
+  background: #f8fafc; border-left: 4px solid var(--blue); border-radius: 10px;
+  padding: 13px 14px; font-size: 15px; line-height: 1.6; color: var(--text); margin-bottom: 6px;
+}
+.proc-nav-end { justify-content: flex-end; }
+.mc-score { margin: 6px 0 4px; font-size: 14.5px; color: var(--text); font-weight: 700; }
+.mc-danger { color: var(--red); font-weight: 800; }
+.mc-links { display: flex; gap: 8px; justify-content: center; margin-top: 8px; }
+.mc-links .btn { font-size: 13.5px; padding: 9px 14px; }
+
+/* ========================================================
+ * 응급상황 대응 (모듈 8)
+ * ====================================================== */
+#screen-emergency { padding: 22px 18px calc(34px + var(--safe-bottom)); }
+.em-principle {
+  text-align: left; background: #fff7ed; border: 1.5px solid #fed7aa; border-radius: 14px;
+  padding: 14px 16px; margin: 4px 0 14px;
+}
+.em-principle-title { font-weight: 800; color: #9a3412; margin-bottom: 8px; font-size: 14.5px; }
+.em-principle ol { margin: 0 0 8px 18px; display: grid; gap: 4px; font-size: 14px; color: #7c2d12; font-weight: 600; }
+.em-place { font-size: 13.5px; color: #7c2d12; line-height: 1.5; font-weight: 600; }
+.em-never { font-size: 13.5px; color: var(--red); font-weight: 800; margin-top: 6px; }
+.em-place-tag {
+  display: inline-block; font-size: 12.5px; font-weight: 800; padding: 5px 12px;
+  border-radius: 999px; margin-bottom: 12px;
+}
+.place-in { background: #e0f2fe; color: #075985; }
+.place-out { background: #fee2e2; color: #991b1b; }
+.em-steps-dot { display: flex; gap: 6px; margin-bottom: 12px; }
+
+/* ========================================================
+ * 학습 결과 · 이수 현황
+ * ====================================================== */
+#screen-results { padding: 22px 18px calc(34px + var(--safe-bottom)); }
+.res-summary { background: #fff; border-radius: var(--radius); padding: 22px 20px; box-shadow: var(--shadow); text-align: center; border-top: 5px solid var(--blue); }
+.res-summary.res-pass { border-top-color: var(--green); }
+.res-summary h3 { color: var(--navy); margin: 6px 0 14px; }
+.res-stats { display: flex; gap: 10px; justify-content: center; }
+.res-stats > div { flex: 1; background: #f6f9fd; border-radius: 12px; padding: 12px 6px; }
+.res-stats b { display: block; font-size: 24px; color: var(--navy); }
+.res-stats span { font-size: 12px; color: var(--muted); font-weight: 700; }
+.res-stats .res-danger b { color: var(--red); }
+.res-mode { margin-top: 14px; font-size: 13px; font-weight: 700; color: var(--muted); }
+
+.res-h { max-width: 860px; margin: 24px auto 10px; color: var(--navy); font-size: 16px; }
+.res-list { display: grid; gap: 8px; }
+.res-row {
+  display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 6px 10px;
+  background: #fff; border-radius: 12px; padding: 12px 14px; box-shadow: var(--shadow);
+  border-left: 5px solid #cbd5e1; text-align: left;
+}
+.res-row.res-ok { border-left-color: var(--green); }
+.res-row.res-weak { border-left-color: var(--orange); }
+.res-row.res-todo { border-left-color: #cbd5e1; opacity: 0.85; }
+.res-title { font-size: 14.5px; font-weight: 800; color: var(--navy); }
+.res-meta { font-size: 13px; font-weight: 800; color: var(--muted); }
+.res-bar { grid-column: 1 / -1; height: 7px; background: #eef2f7; border-radius: 99px; overflow: hidden; }
+.res-bar i { display: block; height: 100%; background: var(--green); border-radius: 99px; transition: width 0.4s; }
+.res-row.res-weak .res-bar i { background: var(--orange); }
+
+.res-criteria { list-style: none; display: grid; gap: 7px; max-width: 860px; margin: 0 auto; }
+.res-criteria li {
+  background: #fff; border-radius: 10px; padding: 12px 14px; font-size: 14px; font-weight: 700;
+  box-shadow: 0 2px 8px rgba(15,40,80,0.06);
+}
+.res-criteria li.ok { color: #15803d; }
+.res-criteria li.no { color: var(--muted); }
+.res-weak-desc { max-width: 860px; margin: 0 auto 10px; font-size: 13.5px; color: var(--muted); line-height: 1.55; }
+.res-reco { display: flex; flex-wrap: wrap; gap: 8px; }
+.res-reco .btn { font-size: 14px; }
+.res-allgood {
+  background: #ecfdf5; border: 1.5px solid #bbf7d0; color: #166534; border-radius: 12px;
+  padding: 14px; font-weight: 700; text-align: center;
+}
+.res-actions { margin-top: 22px; }
+
 /* ---------- 작은 화면 보정 ---------- */
 @media (max-width: 480px) {
   .pc-only { display: none; }
-  .sim-head h2 { font-size: 14px; padding: 9px 14px; }
+  .sim-head h2 { font-size: 14px; padding: 9px 14px; max-width: 60vw; }
   .bottom-panel { max-height: 68vh; }
+  .menu-head h2 { font-size: 21px; }
+  .tts-global { font-size: 12.5px; padding: 8px 12px; }
 }
 @media (min-width: 481px) {
   .pc-only { display: inline; }
