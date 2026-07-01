@@ -273,7 +273,7 @@
         var per = personByID.get(id) || {};
         var ycs = S(e.연도차수); var chasu = ycs.indexOf('/') >= 0 ? parseInt(ycs.split('/')[1], 10) : null;
         examNoShowRows.push({
-          ID: id, 성명: e.성명 || per.성명 || '', 기관명: e.기관명 || per.기관명 || '', 시도: per.시도 || memberSido.get(id) || e.시도 || '',
+          ID: id, 성명: e.성명 || per.성명 || '', 기관명: e.기관명 || per.기관명 || '', 기관코드: per.기관코드 || '', 시도: per.시도 || memberSido.get(id) || e.시도 || '',
           시군구: e.시군구 || per.시군구 || '', 카테고리: e.카테고리, 과정명: e.과정명, 연도차수: ycs, 차수: (isNaN(chasu) ? null : chasu),
           진도율: e.진도율, 점수: e.점수,
           해당과목완료: subjectDone, 전체이수: !!per.이수, 직군: per.직군 || '', 경력: per.경력 || '',
@@ -298,7 +298,7 @@
       dupIDs[g.ID] = 1;
       if (g.카테고리 === '직무교육(필수)') dupReq++; else if (g.카테고리 === '직무교육(선택)') dupSel++;
       duplicateRows.push({
-        ID: g.ID, 성명: per.성명 || g.성명, 시도: per.시도 || g.시도, 기관명: per.기관명 || g.기관명,
+        ID: g.ID, 성명: per.성명 || g.성명, 시도: per.시도 || g.시도, 시군구: per.시군구 || '', 기관명: per.기관명 || g.기관명, 기관코드: per.기관코드 || '',
         직군: per.직군 || g.직군, 과정명: g.과정명, 카테고리: g.카테고리, 수료횟수: g.recs.length,
         차수: g.recs.map(function (x) { return x.연도차수; }).join(', '),
         수료일: g.recs.map(function (x) { return x.수료일; }).filter(Boolean).join(', '),

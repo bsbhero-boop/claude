@@ -16,6 +16,13 @@ const STUDENTS = ['4ecf5ad8-__________20260626.____2.xls', '186cd960-__________2
   await page.waitForTimeout(800);
   console.log('XLSX loaded:', await page.evaluate(() => typeof XLSX));
   console.log('LMS loaded:', await page.evaluate(() => typeof LMS));
+  // blob: 다운로드는 Playwright에서 suggestedFilename을 못 읽으므로(헤드리스 환경 한계),
+  // 앱이 XLSX.writeFile에 실제로 넘기는 파일명을 가로채 검증한다.
+  await page.evaluate(() => {
+    window.__writeFileCalls = [];
+    const orig = XLSX.writeFile;
+    XLSX.writeFile = function (wb, filename) { window.__writeFileCalls.push(filename); return orig.apply(XLSX, arguments); };
+  });
 
   // 회원정보 업로드
   let t = Date.now();
@@ -70,12 +77,45 @@ const STUDENTS = ['4ecf5ad8-__________20260626.____2.xls', '186cd960-__________2
   console.log('중복이수: 건수', v3.중복건수, '인원', v3.중복인원, '필수', v3.중복필수, (v3.중복건수 > 0 && v3.dupRows === v3.중복건수 && v3.dupBad === 0) ? '✅' : '❌');
   if (v3.이수자중재응시 !== 0 || !(v3.차수있음 > 0) || !(v3.중복건수 > 0) || v3.dupBad !== 0) ok = false;
 
-  for (const label of ['데이터 현황', '이수율 현황', '미이수자 명단', '미응시·재응시', '보류·직군변경', '중복자 확인', '과목별 현황', '개인 조회', '설정·도움말', '요약']) {
+  for (const label of ['데이터 현황', '이수율 현황', '이수자·미이수자 명단', '미응시·재응시', '보류·직군변경', '중복자 확인', '과목별 현황', '개인 조회', '설정·도움말', '요약']) {
     await page.click(`button.tab:has-text("${label}")`);
     await page.waitForTimeout(120);
     const cells = await page.$$eval('#content table tbody tr', rs => rs.length).catch(() => 0);
     console.log(`tab [${label}] rendered, table rows on screen: ${cells}`);
   }
+
+  // 이수자·미이수자 명단: 이수자만 필터 → 엑셀 다운로드 → 컬럼(시도·시군구·수행기관명·기관코드·직급) 검증
+  await page.click('button.tab:has-text("이수자·미이수자 명단")'); await page.waitForTimeout(150);
+  const rosterCols = await page.$$eval('#content thead th', ths => ths.map(t => t.textContent.trim()));
+  const need = ['시도', '시군구', '수행기관명', '기관코드', '직급'];
+  const hasAllCols = need.every(n => rosterCols.some(c => c.startsWith(n))); // 정렬 화살표(▴/▾) 무시
+  console.log('종사자 명단 컬럼:', JSON.stringify(rosterCols), '| 필수(시도/시군구/수행기관명/기관코드/직급) 포함:', hasAllCols ? '✅' : '❌');
+  if (!hasAllCols) ok = false;
+  // 이수자만으로 전환
+  await page.selectOption('#content select >> nth=0', { label: '이수자만' });
+  await page.waitForTimeout(200);
+  const rosterCount = await page.$eval('#content .pager span', s => s.textContent).catch(() => '');
+  console.log('이수자만 필터 적용 후 표시 건수:', rosterCount);
+  const [dlRoster] = await Promise.all([
+    page.waitForEvent('download', { timeout: 10000 }),
+    page.click('#content .head button.btn.sec')
+  ]);
+  const rosterPath = path.join(require('os').tmpdir(), 'roster.xlsx');
+  await dlRoster.saveAs(rosterPath);
+  const actualFilename = await page.evaluate(() => window.__writeFileCalls[window.__writeFileCalls.length - 1]);
+  console.log('이수자 명단 다운로드 파일명(앱이 실제로 지정한 이름):', actualFilename);
+  const rosterIsCompleters = /이수자명단/.test(actualFilename || '');
+  if (!rosterIsCompleters) ok = false;
+  // 실제 엑셀 내용 검증(재파싱): 헤더 + 전원 이수여부=이수 + 기관코드 비어있지 않음
+  const XLSXNODE = require('./node_modules/xlsx');
+  const rwb = XLSXNODE.readFile(rosterPath); const rws = rwb.Sheets[rwb.SheetNames[0]];
+  const raoa = XLSXNODE.utils.sheet_to_json(rws, { header: 1 });
+  const rHeader = raoa[0]; const rRows = raoa.slice(1);
+  const idxOrgCode = rHeader.indexOf('기관코드'); const idxDone = rHeader.indexOf('이수여부');
+  const allDone = rRows.every(r => r[idxDone] === '이수');
+  const orgCodeFilled = rRows.every(r => r[idxOrgCode] && String(r[idxOrgCode]).trim() !== '');
+  console.log('다운로드 엑셀 검증: 행수', rRows.length, '| 전원 이수=', allDone ? '✅' : '❌', '| 기관코드 전원 채움=', orgCodeFilled ? '✅' : '❌');
+  if (!allDone || !orgCodeFilled || rRows.length === 0) ok = false;
 
   // 미응시·재응시 탭에서 '재응시 필요만' 필터 + 행 수 확인
   await page.click('button.tab:has-text("미응시·재응시")');

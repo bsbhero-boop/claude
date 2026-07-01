@@ -29,7 +29,7 @@ fs.mkdirSync(DL, { recursive: true });
   // 수강데이터 올리고 미이수자 엑셀 다운로드 시도
   await page.setInputFiles('#fileStudent', [UP + '835ae5a9-__________20260626.____4.xls']);
   await page.waitForFunction(() => window.__LMS_APP && window.__LMS_APP.result, null, { timeout: 120000 });
-  await page.click('button.tab:has-text("미이수자 명단")');
+  await page.click('button.tab:has-text("이수자·미이수자 명단")');
   await page.waitForTimeout(300);
   const [ download ] = await Promise.all([
     page.waitForEvent('download', { timeout: 15000 }),

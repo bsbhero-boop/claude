@@ -235,7 +235,7 @@
 
   /* ---------- 탭 렌더 ------------------------------------------------- */
   var TABS = [
-    ['summary', '요약'], ['coverage', '데이터 현황'], ['rates', '이수율 현황'], ['notdone', '미이수자 명단'],
+    ['summary', '요약'], ['coverage', '데이터 현황'], ['rates', '이수율 현황'], ['notdone', '이수자·미이수자 명단'],
     ['noexam', '미응시·재응시'], ['pending', '보류·직군변경'], ['dup', '중복자 확인'], ['courses', '과목별 현황'], ['person', '개인 조회'], ['settings', '설정·도움말']
   ];
   function renderTabsBar() {
@@ -451,38 +451,52 @@
   }
   function uniq(rows, key) { var s = {}; rows.forEach(function (r) { if (r[key] != null && r[key] !== '') s[r[key]] = 1; }); return Object.keys(s).sort(function (a, b) { return a.localeCompare(b, 'ko'); }); }
 
-  function renderNotDone(c) {
-    var rows = state.result.notCompleted;
-    var card = el('div', { class: 'card' });
-    var cols = [
-      { key: 'ID', label: 'ID' }, { key: '성명', label: '성명' }, { key: '시도', label: '시도' }, { key: '시군구', label: '시군구' },
-      { key: '기관명', label: '기관명' }, { key: '직군', label: '직군' }, { key: '경력', label: '경력' },
+  // 종사자 명단(이수자·미이수자) 공용 컬럼 — 시도·시군구·수행기관명·기관코드·직군(직급) 모두 포함
+  function personListCols() {
+    return [
+      { key: 'ID', label: 'ID' }, { key: '성명', label: '성명' },
+      { key: '시도', label: '시도' }, { key: '시군구', label: '시군구' },
+      { key: '기관명', label: '수행기관명' }, { key: '기관코드', label: '기관코드' },
+      { key: '직군', label: '직급' }, { key: '경력', label: '경력' },
+      { key: '이수', label: '이수여부', render: function (v) { return v ? '<span class="pill y">이수</span>' : '<span class="pill n">미이수</span>'; }, exp: function (v) { return v ? '이수' : '미이수'; } },
       { key: '필수수료', label: '필수', render: function (v) { return v ? '<span class="pill y">수료</span>' : '<span class="pill n">미수료</span>'; }, exp: function (v) { return v ? '수료' : '미수료'; } },
       { key: '선택차시', label: '선택차시', num: true, render: function (v, r) { return r.경력 === '경력자' ? v + ' / ' + r.필요차시 : '-'; }, exp: function (v, r) { return r.경력 === '경력자' ? v : ''; } },
       { key: '사유', label: '미이수 사유' }
     ];
+  }
+  function renderNotDone(c) {
+    var rows = (state.result.persons || []).filter(function (p) { return p.기준정의 && !(p.보류후보 && p.보류상태 === 'pending'); });
+    var card = el('div', { class: 'card' });
+    var cols = personListCols();
     var fb = filterBar({ searchKey: 1, searchLabel: '검색(ID·성명·기관)', searchPlaceholder: '예: 홍길동' }, [
+      { key: '이수여부', label: '이수여부', options: ['이수자만', '미이수자만'] },
       { key: '시도', label: '시도', options: uniq(rows, '시도') },
       { key: '직군', label: '직군', options: uniq(rows, '직군') },
       { key: '경력', label: '경력', options: uniq(rows, '경력') }
     ], apply);
+    // 기본값: 미이수자만(기존 동작 유지)
+    fb.sels['이수여부'].value = '미이수자만';
     var head = el('div', { class: 'head' });
-    head.appendChild(el('div', { html: '<h2>미이수자 명단 (독려용)</h2><p class="desc">대상자 중 이수 기준을 충족하지 못한 인원</p>' }));
+    head.appendChild(el('div', { html: '<h2>이수자·미이수자 명단</h2><p class="desc">대상자의 이수/미이수 현황. 이수여부 필터로 이수자 명단만 골라 다운로드할 수 있습니다.</p>' }));
     var expHolder = el('div'); head.appendChild(expHolder);
     card.appendChild(head); card.appendChild(fb.node);
     var tableHolder = el('div'); card.appendChild(tableHolder); c.appendChild(card);
     var filtered = rows;
     function apply() {
       var q = (fb.sels.__search.value || '').trim().toLowerCase();
+      var iv = fb.sels['이수여부'].value;
       filtered = rows.filter(function (r) {
+        if (iv === '이수자만' && !r.이수) return false;
+        if (iv === '미이수자만' && r.이수) return false;
         if (fb.sels['시도'].value && r.시도 !== fb.sels['시도'].value) return false;
         if (fb.sels['직군'].value && r.직군 !== fb.sels['직군'].value) return false;
         if (fb.sels['경력'].value && r.경력 !== fb.sels['경력'].value) return false;
         if (q && (String(r.ID).toLowerCase().indexOf(q) < 0 && String(r.성명).toLowerCase().indexOf(q) < 0 && String(r.기관명).toLowerCase().indexOf(q) < 0)) return false;
         return true;
       });
+      var fname = iv === '이수자만' ? '이수자명단.xlsx' : (iv === '미이수자만' ? '미이수자명단.xlsx' : '이수_미이수자명단.xlsx');
       tableHolder.innerHTML = ''; dataTable(tableHolder, cols, filtered, { pageSize: 50, sortKey: '시도', sortDir: 1 });
-      expHolder.innerHTML = ''; expHolder.appendChild(expBtn(filtered, cols, '미이수자명단.xlsx', '엑셀 다운로드(' + fmt(filtered.length) + ')'));
+      expHolder.innerHTML = ''; expHolder.appendChild(expBtn(filtered, cols, fname, '엑셀 다운로드(' + fmt(filtered.length) + ')'));
     }
     apply();
   }
@@ -495,7 +509,8 @@
       '“해당과목 완료”가 <b>아니오</b>면 재응시 안내가 필요합니다.';
     card.appendChild(note);
     var cols = [
-      { key: 'ID', label: 'ID' }, { key: '성명', label: '성명' }, { key: '시도', label: '시도' }, { key: '기관명', label: '기관명' },
+      { key: 'ID', label: 'ID' }, { key: '성명', label: '성명' }, { key: '시도', label: '시도' }, { key: '시군구', label: '시군구' },
+      { key: '기관명', label: '수행기관명' }, { key: '기관코드', label: '기관코드' }, { key: '직군', label: '직급' },
       { key: '차수', label: '차수', num: true, render: function (v) { return v == null ? '-' : v + '차'; }, exp: function (v) { return v; } },
       { key: '카테고리', label: '구분' }, { key: '과정명', label: '미응시 과목/과정' },
       { key: '진도율', label: '진도율', num: true, exp: function (v) { return v; } }, { key: '점수', label: '점수', num: true },
@@ -547,7 +562,8 @@
     card.appendChild(sum);
     if (!rows.length) { card.appendChild(el('div', { class: 'empty-state', html: '<div class="big">✅</div>같은 과정을 2회 이상 수료한 중복 건이 없습니다.' })); c.appendChild(card); return; }
     var cols = [
-      { key: 'ID', label: 'ID' }, { key: '성명', label: '성명' }, { key: '시도', label: '시도' }, { key: '기관명', label: '기관명' }, { key: '직군', label: '직군' },
+      { key: 'ID', label: 'ID' }, { key: '성명', label: '성명' }, { key: '시도', label: '시도' }, { key: '시군구', label: '시군구' },
+      { key: '기관명', label: '수행기관명' }, { key: '기관코드', label: '기관코드' }, { key: '직군', label: '직급' },
       { key: '카테고리', label: '구분' }, { key: '과정명', label: '중복 수료 과정' },
       { key: '수료횟수', label: '수료횟수', num: true, render: function (v) { return '<span class="pill g">' + v + '회</span>'; }, exp: function (v) { return v; } },
       { key: '차수', label: '수료 차수' }, { key: '수료일', label: '수료일' },
@@ -608,8 +624,9 @@
       c.appendChild(card); return;
     }
     var cols = [
-      { key: 'ID', label: 'ID' }, { key: '성명', label: '성명' }, { key: '시도', label: '시도' }, { key: '기관명', label: '기관명' },
-      { key: '직군', label: '현재 직군' }, { key: '경력', label: '경력' },
+      { key: 'ID', label: 'ID' }, { key: '성명', label: '성명' }, { key: '시도', label: '시도' }, { key: '시군구', label: '시군구' },
+      { key: '기관명', label: '수행기관명' }, { key: '기관코드', label: '기관코드' },
+      { key: '직군', label: '현재 직급' }, { key: '경력', label: '경력' },
       { key: '당시직군', label: '당시 직군(수료시)', render: function (v) { return '<b>' + (v || '-') + '</b>'; } },
       { key: '변경완료과정', label: '수료한 필수과정' },
       { key: '선택차시', label: '선택차시', num: true, render: function (v, r) { return r.경력 === '경력자' ? v + ' / ' + r.필요차시 : '-'; }, exp: function (v, r) { return r.경력 === '경력자' ? v : ''; } },
