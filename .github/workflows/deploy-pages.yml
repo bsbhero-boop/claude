@@ -1,11 +1,10 @@
 name: Deploy to GitHub Pages
 
-# 이 브랜치에 코드가 푸시되면 정적 사이트를 GitHub Pages로 자동 배포합니다.
-# 수동 실행도 가능(Actions 탭 → Run workflow).
+# 참고: 이 저장소는 비-기본 브랜치에서 개발 중이라, GitHub Pages는
+# "Deploy from a branch"(클래식) 방식으로 이 브랜치를 지정하는 것이 가장 안정적입니다.
+# (그 방식은 이 워크플로 없이도 푸시 시 자동 배포됩니다.)
+# 이 워크플로는 나중에 Pages 소스를 "GitHub Actions"로 쓰는 경우를 위해 수동 실행만 남겨둡니다.
 on:
-  push:
-    branches:
-      - claude/hospital-companion-3d-training-t842fs
   workflow_dispatch:
 
 # GitHub Pages 배포에 필요한 권한
