@@ -1,0 +1,14 @@
+{
+  "name": "lms-jikmu-stats",
+  "version": "1.0.0",
+  "private": true,
+  "description": "배움터 LMS 직무교육 통계 대시보드 (단일 HTML 빌드)",
+  "scripts": {
+    "build": "node build.js",
+    "test": "node e2e.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.1",
+    "xlsx": "^0.18.5"
+  }
+}
