@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Pretendard',
+      'Malgun Gothic', 'Noto Sans KR', system-ui, sans-serif;
+    @apply bg-brand-100 text-brand-900;
+    font-size: 18px;
+    line-height: 1.6;
+  }
+
+  button {
+    font-family: inherit;
+  }
+}
+
+@layer utilities {
+  /* Disable pull-to-refresh / overscroll bounce so tap navigation feels stable */
+  .no-overscroll {
+    overscroll-behavior: none;
+  }
+}

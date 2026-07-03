@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600">
+  <defs>
+    <linearGradient id="vignette" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#000000" stop-opacity="0.05" />
+      <stop offset="70%" stop-color="#000000" stop-opacity="0.05" />
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.28" />
+    </linearGradient>
+  </defs>
+  <rect width="800" height="600" fill="#3f4f58" />
+  <rect width="800" height="600" fill="url(#vignette)" />
+  <text x="50%" y="264" text-anchor="middle" font-family="-apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-size="22" letter-spacing="4" fill="#ffffff" fill-opacity="0.75">STAGE 7</text>
+  <text x="50%" y="320" text-anchor="middle" font-family="-apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-size="34" font-weight="700" fill="#ffffff">귀가 지원 및 마무리</text>
+  <text x="50%" y="360" text-anchor="middle" font-family="-apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-size="20" fill="#ffffff" fill-opacity="0.7">병원 정문</text>
+</svg>
