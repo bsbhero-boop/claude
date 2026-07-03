@@ -1,0 +1,22 @@
+node_modules
+dist
+dist-ssr
+*.local
+*.tsbuildinfo
+vite.config.d.ts
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+
+# OS
+.DS_Store
+
+# Env (Apps Script Web App URL etc. — see .env.example)
+.env
+.env.*
+!.env.example
+
+# Logs
+npm-debug.log*
