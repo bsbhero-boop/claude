@@ -16,22 +16,40 @@ export interface Quiz {
   source: string;
 }
 
-export interface Scene {
+export type ExitStyle = 'forward' | 'optional' | 'return' | 'gated';
+
+export interface Exit {
   id: string;
-  /** 1-7, drives the "N/7 단계" progress display */
-  stageNumber: number;
+  /** a11y label + mini-map legend text, e.g. "약국으로 이동" */
+  label: string;
+  /** Percent-based position of this exit's tap target on the scene image */
+  hotspot: { x: number; y: number };
+  targetId: string;
+  style: ExitStyle;
+  /** Only meaningful on 'gated' exits: all of these location ids must be solved first */
+  requires?: string[];
+}
+
+export interface Location {
+  id: string;
+  role: 'mandatory' | 'optional';
+  /** Drives the "N/7 단계" progress display — shared across branch pairs like billing/pharmacy */
+  mapOrder: number;
   stageLabel: string;
   /** For stages split across multiple screens (e.g. 수납 / 약국) */
   subLabel?: string;
   subIndex?: number;
   subTotal?: number;
+  /** Only set on optional locations: the mandatory location they branch off of */
+  parentId?: string;
   image: string;
   imageAlt: string;
-  /** Percent-based position of the "next" hotspot on the scene image */
-  hotspot: { x: number; y: number };
-  learningPoints: string[];
-  learningSource: string;
-  quiz: Quiz;
+  /** Optional pure-flavor locations may skip learning points entirely */
+  learningPoints?: string[];
+  learningSource?: string;
+  /** Optional pure-flavor locations have no quiz — visiting them never gates anything */
+  quiz?: Quiz;
+  exits: Exit[];
 }
 
 export interface EmergencyCard {

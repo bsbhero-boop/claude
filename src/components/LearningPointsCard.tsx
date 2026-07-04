@@ -1,6 +1,6 @@
 interface LearningPointsCardProps {
   points: string[];
-  source: string;
+  source?: string;
 }
 
 export default function LearningPointsCard({ points, source }: LearningPointsCardProps) {
@@ -15,7 +15,7 @@ export default function LearningPointsCard({ points, source }: LearningPointsCar
           </li>
         ))}
       </ul>
-      <p className="mt-3 text-sm text-brand-300">출처: {source}</p>
+      {source && <p className="mt-3 text-sm text-brand-300">출처: {source}</p>}
     </div>
   );
 }

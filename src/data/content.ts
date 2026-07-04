@@ -1,4 +1,4 @@
-import type { EmergencyCard, OXQuestion, Scene } from '../types';
+import type { EmergencyCard, Location, OXQuestion } from '../types';
 
 export const ORIENTATION = {
   intro:
@@ -6,14 +6,18 @@ export const ORIENTATION = {
   guide: '지금부터 이용자를 모시고 병원에 다녀오는 과정을 함께 해봅니다.',
 };
 
-export const SCENES: Scene[] = [
+/** Sentinel target id: reaching this from an exit ends the map and starts the closing O/X quiz. */
+export const CLOSING_QUIZ_ID = '__closing_quiz__';
+
+export const LOCATIONS: Location[] = [
+  // ── 필수 경로 (기존 7단계 8장면과 학습포인트·퀴즈·출처 동일) ─────────────
   {
-    id: 'stage_01',
-    stageNumber: 1,
+    id: 'home_entrance',
+    role: 'mandatory',
+    mapOrder: 1,
     stageLabel: '사전준비 및 이동지원',
     image: '/images/scene_01.svg',
     imageAlt: '이용자 자택 현관 앞에서 돌봄제공인력이 인사하는 모습',
-    hotspot: { x: 78, y: 62 },
     learningSource: '사업안내서 Ⅵ-2-03 준비단계 체크리스트, 매뉴얼 Ⅰ-2-2·3',
     learningPoints: [
       '이동 목적·방법·경로·예상 소요시간을 사전에 확인한다',
@@ -35,14 +39,17 @@ export const SCENES: Scene[] = [
       },
       source: '2026년 노인맞춤돌봄서비스 사업안내 Ⅵ-2-03',
     },
+    exits: [
+      { id: 'to_lobby', label: '병원으로 이동', hotspot: { x: 78, y: 62 }, targetId: 'hospital_lobby', style: 'forward' },
+    ],
   },
   {
-    id: 'stage_02',
-    stageNumber: 2,
+    id: 'hospital_lobby',
+    role: 'mandatory',
+    mapOrder: 2,
     stageLabel: '병원 도착 및 접수',
     image: '/images/scene_02.svg',
     imageAlt: '병원 로비의 접수·수납 창구와 안내판',
-    hotspot: { x: 50, y: 20 },
     learningSource: '병원동행 서비스 교육 매뉴얼 Ⅱ-2-2 절차1',
     learningPoints: [
       '접수 위치를 안내하고, 신분증·진료카드가 준비되었는지 확인한다',
@@ -62,14 +69,19 @@ export const SCENES: Scene[] = [
       },
       source: '병원동행 서비스 교육 매뉴얼 Ⅱ-2-2 절차1',
     },
+    exits: [
+      { id: 'to_info_desk', label: '안내데스크 둘러보기', hotspot: { x: 16, y: 72 }, targetId: 'info_desk', style: 'optional' },
+      { id: 'to_store', label: '편의점 둘러보기', hotspot: { x: 88, y: 78 }, targetId: 'convenience_store', style: 'optional' },
+      { id: 'to_waiting_room', label: '대기실로 이동', hotspot: { x: 50, y: 20 }, targetId: 'waiting_room', style: 'forward' },
+    ],
   },
   {
-    id: 'stage_03',
-    stageNumber: 3,
+    id: 'waiting_room',
+    role: 'mandatory',
+    mapOrder: 3,
     stageLabel: '진료 대기',
     image: '/images/scene_03.svg',
     imageAlt: '대기실과 대기번호 전광판, 흐릿하게 처리된 배경 인물들',
-    hotspot: { x: 66, y: 55 },
     learningSource: '병원동행 서비스 교육 매뉴얼 Ⅱ-2-2 절차2, Ⅳ-1',
     learningPoints: [
       '대기 장소와 번호를 안내하고, 화장실·휴게공간을 안내한다',
@@ -89,14 +101,19 @@ export const SCENES: Scene[] = [
       },
       source: '병원동행 서비스 교육 매뉴얼 Ⅱ-2-2 절차2, Ⅳ-1',
     },
+    exits: [
+      { id: 'to_restroom', label: '화장실 둘러보기', hotspot: { x: 14, y: 68 }, targetId: 'restroom', style: 'optional' },
+      { id: 'to_lounge', label: '휴게 라운지 둘러보기', hotspot: { x: 90, y: 70 }, targetId: 'rest_lounge', style: 'optional' },
+      { id: 'to_exam_room', label: '진료실로 이동', hotspot: { x: 66, y: 55 }, targetId: 'exam_room', style: 'forward' },
+    ],
   },
   {
-    id: 'stage_04',
-    stageNumber: 4,
+    id: 'exam_room',
+    role: 'mandatory',
+    mapOrder: 4,
     stageLabel: '진료실 동행',
     image: '/images/scene_04.svg',
     imageAlt: '진료실에서 의사, 이용자, 돌봄제공인력이 대화하는 모습',
-    hotspot: { x: 50, y: 24 },
     learningSource: '병원동행 서비스 교육 매뉴얼 Ⅰ-3-2 수행불가업무, Ⅲ-2',
     learningPoints: [
       '진료실 이동을 지원하고, 이용자의 의사 표현을 보조한다',
@@ -117,14 +134,17 @@ export const SCENES: Scene[] = [
       },
       source: '병원동행 서비스 교육 매뉴얼 Ⅰ-3-2 수행불가업무, Ⅲ-2',
     },
+    exits: [
+      { id: 'to_test_corridor', label: '검사실로 이동', hotspot: { x: 50, y: 24 }, targetId: 'test_corridor', style: 'forward' },
+    ],
   },
   {
-    id: 'stage_05',
-    stageNumber: 5,
+    id: 'test_corridor',
+    role: 'mandatory',
+    mapOrder: 5,
     stageLabel: '검사 동행',
     image: '/images/scene_05.svg',
     imageAlt: '검사실 복도와 영상의학실 표지판, 엘리베이터',
-    hotspot: { x: 82, y: 46 },
     learningSource: '병원동행 서비스 교육 매뉴얼 Ⅱ-2-3, Ⅳ-2 나-이동시 유의사항',
     learningPoints: [
       '검사실 위치·순서를 안내하고, 금식 여부 등 검사 전 준비사항을 확인한다',
@@ -144,17 +164,21 @@ export const SCENES: Scene[] = [
       },
       source: '병원동행 서비스 교육 매뉴얼 Ⅱ-2-3, Ⅳ-2 나-이동시 유의사항',
     },
+    exits: [
+      { id: 'to_billing', label: '수납창구로 이동', hotspot: { x: 30, y: 50 }, targetId: 'billing_desk', style: 'forward' },
+      { id: 'to_pharmacy', label: '약국으로 이동', hotspot: { x: 70, y: 50 }, targetId: 'pharmacy', style: 'forward' },
+    ],
   },
   {
-    id: 'stage_06a',
-    stageNumber: 6,
+    id: 'billing_desk',
+    role: 'mandatory',
+    mapOrder: 6,
     stageLabel: '수납 및 약국',
     subLabel: '수납',
     subIndex: 1,
     subTotal: 2,
     image: '/images/scene_06a.svg',
     imageAlt: '병원 수납창구',
-    hotspot: { x: 74, y: 58 },
     learningSource: '병원동행 서비스 교육 매뉴얼 Ⅱ-2-3, Ⅲ-3-3, Ⅲ-4',
     learningPoints: [
       '수납창구를 안내하고 영수증·처방전 수령을 확인한다',
@@ -173,17 +197,28 @@ export const SCENES: Scene[] = [
       },
       source: '병원동행 서비스 교육 매뉴얼 Ⅲ-3-3, Ⅲ-4',
     },
+    exits: [
+      { id: 'to_pharmacy', label: '약국으로 이동', hotspot: { x: 74, y: 58 }, targetId: 'pharmacy', style: 'forward' },
+      {
+        id: 'to_discharge',
+        label: '귀가하기',
+        hotspot: { x: 50, y: 20 },
+        targetId: 'discharge_exit',
+        style: 'gated',
+        requires: ['pharmacy'],
+      },
+    ],
   },
   {
-    id: 'stage_06b',
-    stageNumber: 6,
+    id: 'pharmacy',
+    role: 'mandatory',
+    mapOrder: 6,
     stageLabel: '수납 및 약국',
     subLabel: '약국',
     subIndex: 2,
     subTotal: 2,
     image: '/images/scene_06b.svg',
     imageAlt: '병원 약국 창구',
-    hotspot: { x: 50, y: 20 },
     learningSource: '병원동행 서비스 교육 매뉴얼 Ⅱ-2-3, Ⅲ-3-3',
     learningPoints: [
       '약국 창구로 안내하고 처방전을 확인한다',
@@ -202,14 +237,25 @@ export const SCENES: Scene[] = [
       },
       source: '병원동행 서비스 교육 매뉴얼 Ⅱ-2-3, Ⅲ-3-3',
     },
+    exits: [
+      { id: 'to_billing', label: '수납창구로 이동', hotspot: { x: 26, y: 58 }, targetId: 'billing_desk', style: 'forward' },
+      {
+        id: 'to_discharge',
+        label: '귀가하기',
+        hotspot: { x: 50, y: 20 },
+        targetId: 'discharge_exit',
+        style: 'gated',
+        requires: ['billing_desk'],
+      },
+    ],
   },
   {
-    id: 'stage_07',
-    stageNumber: 7,
+    id: 'discharge_exit',
+    role: 'mandatory',
+    mapOrder: 7,
     stageLabel: '귀가 지원 및 마무리',
     image: '/images/scene_07.svg',
     imageAlt: '병원 정문 앞 승하차 장면',
-    hotspot: { x: 50, y: 66 },
     learningSource: '사업안내서 Ⅵ-2-03 정리단계 체크리스트, 매뉴얼 Ⅳ-4',
     learningPoints: [
       '귀가 교통수단을 확인하고 안전한 승하차를 보조한다',
@@ -230,10 +276,77 @@ export const SCENES: Scene[] = [
       },
       source: '병원동행 서비스 교육 매뉴얼 Ⅳ-4 / 2026년 노인맞춤돌봄서비스 사업안내 Ⅵ-2-03',
     },
+    exits: [
+      { id: 'to_closing_quiz', label: '마무리 퀴즈로 이동', hotspot: { x: 50, y: 66 }, targetId: CLOSING_QUIZ_ID, style: 'forward' },
+    ],
+  },
+
+  // ── 선택(둘러보기) 장소 4곳 — 퀴즈 없음, 언제나 자유롭게 다녀올 수 있음 ─────
+  {
+    id: 'info_desk',
+    role: 'optional',
+    mapOrder: 2,
+    stageLabel: '안내데스크',
+    parentId: 'hospital_lobby',
+    image: '/images/scene_opt_info_desk.svg',
+    imageAlt: '병원 로비 종합안내데스크, 유니폼을 입은 안내 직원이 손으로 방향을 가리키는 모습',
+    learningPoints: [
+      '처음 온 병원에서는 종합안내데스크에서 진료과 위치·접수 절차를 먼저 물어볼 수 있다',
+    ],
+    exits: [{ id: 'return', label: '로비로 돌아가기', hotspot: { x: 50, y: 82 }, targetId: 'hospital_lobby', style: 'return' }],
+  },
+  {
+    id: 'convenience_store',
+    role: 'optional',
+    mapOrder: 2,
+    stageLabel: '편의점',
+    parentId: 'hospital_lobby',
+    image: '/images/scene_opt_store.svg',
+    imageAlt: '병원 1층 편의점 입구, 음료 냉장고와 간단한 매대',
+    learningPoints: [
+      '대기 중 이용자가 물이나 간단한 간식을 찾을 때 편의점 위치를 안내할 수 있다',
+    ],
+    exits: [{ id: 'return', label: '로비로 돌아가기', hotspot: { x: 50, y: 82 }, targetId: 'hospital_lobby', style: 'return' }],
+  },
+  {
+    id: 'restroom',
+    role: 'optional',
+    mapOrder: 3,
+    stageLabel: '화장실',
+    parentId: 'waiting_room',
+    image: '/images/scene_opt_restroom.svg',
+    imageAlt: '병원 복도의 화장실 입구와 표지판',
+    learningPoints: [
+      '화장실 위치를 미리 안내해두면 대기 중 이용자가 편하게 다녀올 수 있다',
+      '혼잡한 장소에서는 이용자 곁을 벗어나지 않는다 (낙상 예방)',
+    ],
+    learningSource: '병원동행 서비스 교육 매뉴얼 Ⅱ-2-2 절차2, Ⅳ-1',
+    exits: [{ id: 'return', label: '대기실로 돌아가기', hotspot: { x: 50, y: 82 }, targetId: 'waiting_room', style: 'return' }],
+  },
+  {
+    id: 'rest_lounge',
+    role: 'optional',
+    mapOrder: 3,
+    stageLabel: '휴게 라운지',
+    parentId: 'waiting_room',
+    image: '/images/scene_opt_lounge.svg',
+    imageAlt: '병원 복도 한쪽의 창가 휴게 라운지, 벤치와 화분',
+    learningPoints: [
+      '장시간 대기로 피로해하면 휴게 라운지에서 잠시 쉬어가도록 안내할 수 있다',
+    ],
+    exits: [{ id: 'return', label: '대기실로 돌아가기', hotspot: { x: 50, y: 82 }, targetId: 'waiting_room', style: 'return' }],
   },
 ];
 
-/** 보너스: 아무 스테이지 전환 시점에서나 낮은 확률로 등장 (선택 구현, 점수에는 반영하지 않음) */
+export const LOCATIONS_BY_ID: Record<string, Location> = Object.fromEntries(
+  LOCATIONS.map((location) => [location.id, location]),
+);
+
+export const MANDATORY_LOCATIONS = LOCATIONS.filter((l) => l.role === 'mandatory');
+
+export const TOTAL_STAGES = new Set(MANDATORY_LOCATIONS.map((l) => l.mapOrder)).size;
+
+/** 보너스: 아무 이동 시점에서나 낮은 확률로 등장 (선택 구현, 점수에는 반영하지 않음) */
 export const EMERGENCY_CARDS: EmergencyCard[] = [
   {
     id: 'fall',
@@ -397,5 +510,4 @@ export const OX_QUESTIONS: OXQuestion[] = [
   },
 ];
 
-export const TOTAL_STAGES = 7;
-export const TOTAL_SCORED_QUESTIONS = SCENES.length + OX_QUESTIONS.length;
+export const TOTAL_SCORED_QUESTIONS = MANDATORY_LOCATIONS.length + OX_QUESTIONS.length;

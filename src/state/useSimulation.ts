@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useReducer } from 'react';
-import { EMERGENCY_CARDS, OX_QUESTIONS, SCENES } from '../data/content';
+import { CLOSING_QUIZ_ID, EMERGENCY_CARDS, LOCATIONS, LOCATIONS_BY_ID, OX_QUESTIONS, TOTAL_STAGES } from '../data/content';
 import { generateCompletionCode } from '../lib/completionCode';
 import type { CompletionPayload, EmergencyCard, Trainee } from '../types';
 
@@ -7,18 +7,23 @@ export type Phase = 'orientation' | 'scene' | 'closing-quiz' | 'completion';
 
 interface EmergencyState {
   enabled: boolean;
-  triggerAfterIndex: number;
+  triggerAfterMapOrder: number;
   consumed: boolean;
   active: EmergencyCard | null;
+  /** Location to actually move to once the emergency card is dismissed. */
+  pendingTargetId?: string;
 }
 
 interface State {
   phase: Phase;
   trainee: Trainee | null;
   startedAt: string | null;
-  sceneIndex: number;
-  sceneAttempted: Record<string, boolean>;
-  sceneFirstTryCorrect: Record<string, boolean>;
+  currentLocationId: string;
+  visitedIds: Record<string, true>;
+  locationAttempted: Record<string, boolean>;
+  locationFirstTryCorrect: Record<string, boolean>;
+  /** Quiz eventually answered correctly — gates this location's forward/gated exits. */
+  locationSolved: Record<string, boolean>;
   oxIndex: number;
   oxAttempted: Record<string, boolean>;
   oxFirstTryCorrect: Record<string, boolean>;
@@ -28,40 +33,58 @@ interface State {
 
 type Action =
   | { type: 'SUBMIT_ORIENTATION'; trainee: Trainee }
-  | { type: 'SCENE_QUIZ_RESULT'; sceneId: string; correct: boolean }
-  | { type: 'ADVANCE_SCENE' }
+  | { type: 'LOCATION_QUIZ_RESULT'; locationId: string; correct: boolean }
+  | { type: 'LOCATION_SOLVED'; locationId: string }
+  | { type: 'NAVIGATE'; targetId: string }
   | { type: 'DISMISS_EMERGENCY' }
   | { type: 'OX_RESULT'; questionId: string; correct: boolean }
   | { type: 'ADVANCE_OX' };
 
 const EMERGENCY_CHANCE = 0.35;
-// Don't fire on the very first or very last scene transition — mid-flow feels natural.
-const SAFE_TRIGGER_RANGE = [1, SCENES.length - 2] as const;
+// Don't fire on the very first mandatory location or the last one — mid-flow feels natural.
+const SAFE_TRIGGER_RANGE = [2, TOTAL_STAGES - 1] as const;
 
 function rollEmergency(): EmergencyState {
   const enabled = Math.random() < EMERGENCY_CHANCE;
   const [min, max] = SAFE_TRIGGER_RANGE;
-  const triggerAfterIndex = min + Math.floor(Math.random() * (max - min + 1));
-  return { enabled, triggerAfterIndex, consumed: false, active: null };
+  const triggerAfterMapOrder = min + Math.floor(Math.random() * (max - min + 1));
+  return { enabled, triggerAfterMapOrder, consumed: false, active: null };
 }
 
 function pickRandomCard(): EmergencyCard {
   return EMERGENCY_CARDS[Math.floor(Math.random() * EMERGENCY_CARDS.length)];
 }
 
+const FIRST_LOCATION_ID = LOCATIONS[0].id;
+
 const initialState: State = {
   phase: 'orientation',
   trainee: null,
   startedAt: null,
-  sceneIndex: 0,
-  sceneAttempted: {},
-  sceneFirstTryCorrect: {},
+  currentLocationId: FIRST_LOCATION_ID,
+  visitedIds: { [FIRST_LOCATION_ID]: true },
+  locationAttempted: {},
+  locationFirstTryCorrect: {},
+  locationSolved: {},
   oxIndex: 0,
   oxAttempted: {},
   oxFirstTryCorrect: {},
-  emergency: { enabled: false, triggerAfterIndex: -1, consumed: false, active: null },
+  emergency: { enabled: false, triggerAfterMapOrder: -1, consumed: false, active: null },
   completion: null,
 };
+
+/** Actually moves the trainee — used both for a plain NAVIGATE and to resume after an emergency card. */
+function performNavigate(state: State, targetId: string): State {
+  if (targetId === CLOSING_QUIZ_ID) {
+    return { ...state, phase: 'closing-quiz', oxIndex: 0 };
+  }
+  if (!LOCATIONS_BY_ID[targetId]) return state;
+  return {
+    ...state,
+    currentLocationId: targetId,
+    visitedIds: { ...state.visitedIds, [targetId]: true },
+  };
+}
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
@@ -74,32 +97,43 @@ function reducer(state: State, action: Action): State {
         emergency: rollEmergency(),
       };
 
-    case 'SCENE_QUIZ_RESULT': {
-      if (state.sceneAttempted[action.sceneId]) return state;
+    case 'LOCATION_QUIZ_RESULT': {
+      if (state.locationAttempted[action.locationId]) return state;
       return {
         ...state,
-        sceneAttempted: { ...state.sceneAttempted, [action.sceneId]: true },
-        sceneFirstTryCorrect: { ...state.sceneFirstTryCorrect, [action.sceneId]: action.correct },
+        locationAttempted: { ...state.locationAttempted, [action.locationId]: true },
+        locationFirstTryCorrect: { ...state.locationFirstTryCorrect, [action.locationId]: action.correct },
       };
     }
 
-    case 'ADVANCE_SCENE': {
+    case 'LOCATION_SOLVED': {
+      if (state.locationSolved[action.locationId]) return state;
+      return { ...state, locationSolved: { ...state.locationSolved, [action.locationId]: true } };
+    }
+
+    case 'NAVIGATE': {
+      const from = LOCATIONS_BY_ID[state.currentLocationId];
+      const to = LOCATIONS_BY_ID[action.targetId];
+      const isMandatoryHop = Boolean(from && to && from.role === 'mandatory' && to.role === 'mandatory');
+
       if (
+        isMandatoryHop &&
         state.emergency.enabled &&
         !state.emergency.consumed &&
-        state.sceneIndex === state.emergency.triggerAfterIndex
+        from.mapOrder === state.emergency.triggerAfterMapOrder
       ) {
         return {
           ...state,
-          emergency: { ...state.emergency, consumed: true, active: pickRandomCard() },
+          emergency: { ...state.emergency, consumed: true, active: pickRandomCard(), pendingTargetId: action.targetId },
         };
       }
-      return advanceFromScene(state);
+      return performNavigate(state, action.targetId);
     }
 
     case 'DISMISS_EMERGENCY': {
-      const cleared = { ...state.emergency, active: null };
-      return advanceFromScene({ ...state, emergency: cleared });
+      const { pendingTargetId } = state.emergency;
+      const cleared: State = { ...state, emergency: { ...state.emergency, active: null, pendingTargetId: undefined } };
+      return pendingTargetId ? performNavigate(cleared, pendingTargetId) : cleared;
     }
 
     case 'OX_RESULT': {
@@ -124,24 +158,16 @@ function reducer(state: State, action: Action): State {
   }
 }
 
-function advanceFromScene(state: State): State {
-  const nextIndex = state.sceneIndex + 1;
-  if (nextIndex >= SCENES.length) {
-    return { ...state, phase: 'closing-quiz', oxIndex: 0 };
-  }
-  return { ...state, sceneIndex: nextIndex };
-}
-
 function buildCompletion(state: State): CompletionPayload {
-  const sceneCorrect = Object.values(state.sceneFirstTryCorrect).filter(Boolean).length;
+  const locationCorrect = Object.values(state.locationFirstTryCorrect).filter(Boolean).length;
   const oxCorrect = Object.values(state.oxFirstTryCorrect).filter(Boolean).length;
-  const total = SCENES.length + OX_QUESTIONS.length;
+  const total = Object.keys(state.locationAttempted).length + OX_QUESTIONS.length;
   const now = new Date();
   return {
     name: state.trainee?.name ?? '',
     org: state.trainee?.org ?? '',
     completedAt: now.toISOString(),
-    score: `${sceneCorrect + oxCorrect}/${total}`,
+    score: `${locationCorrect + oxCorrect}/${total}`,
     completionCode: generateCompletionCode(now),
   };
 }
@@ -150,11 +176,12 @@ export function useSimulation() {
   const [state, dispatch] = useReducer(reducer, initialState);
 
   const submitOrientation = useCallback((trainee: Trainee) => dispatch({ type: 'SUBMIT_ORIENTATION', trainee }), []);
-  const submitSceneAnswer = useCallback(
-    (sceneId: string, correct: boolean) => dispatch({ type: 'SCENE_QUIZ_RESULT', sceneId, correct }),
+  const submitLocationAnswer = useCallback(
+    (locationId: string, correct: boolean) => dispatch({ type: 'LOCATION_QUIZ_RESULT', locationId, correct }),
     [],
   );
-  const advanceScene = useCallback(() => dispatch({ type: 'ADVANCE_SCENE' }), []);
+  const markLocationSolved = useCallback((locationId: string) => dispatch({ type: 'LOCATION_SOLVED', locationId }), []);
+  const navigate = useCallback((targetId: string) => dispatch({ type: 'NAVIGATE', targetId }), []);
   const dismissEmergency = useCallback(() => dispatch({ type: 'DISMISS_EMERGENCY' }), []);
   const submitOxAnswer = useCallback(
     (questionId: string, correct: boolean) => dispatch({ type: 'OX_RESULT', questionId, correct }),
@@ -162,28 +189,34 @@ export function useSimulation() {
   );
   const advanceOx = useCallback(() => dispatch({ type: 'ADVANCE_OX' }), []);
 
-  const currentScene = SCENES[state.sceneIndex];
+  const currentLocation = LOCATIONS_BY_ID[state.currentLocationId];
   const currentOxQuestion = OX_QUESTIONS[state.oxIndex];
 
   const progress = useMemo(() => {
-    if (state.phase === 'scene' && currentScene) {
-      return { current: currentScene.stageNumber, total: SCENES[SCENES.length - 1].stageNumber };
+    if (state.phase === 'scene' && currentLocation) {
+      const anchor = currentLocation.role === 'mandatory' ? currentLocation : LOCATIONS_BY_ID[currentLocation.parentId!];
+      return {
+        current: anchor.mapOrder,
+        total: TOTAL_STAGES,
+        detourLabel: currentLocation.role === 'optional' ? currentLocation.stageLabel : undefined,
+      };
     }
     if (state.phase === 'closing-quiz') {
       return { current: state.oxIndex + 1, total: OX_QUESTIONS.length };
     }
     return null;
-  }, [state.phase, state.oxIndex, currentScene]);
+  }, [state.phase, state.oxIndex, currentLocation]);
 
   return {
     state,
-    currentScene,
+    currentLocation,
     currentOxQuestion,
     progress,
     actions: {
       submitOrientation,
-      submitSceneAnswer,
-      advanceScene,
+      submitLocationAnswer,
+      markLocationSolved,
+      navigate,
       dismissEmergency,
       submitOxAnswer,
       advanceOx,

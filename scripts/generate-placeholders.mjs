@@ -17,10 +17,16 @@ const scenes = [
   { file: 'scene_06a', num: 6, title: '수납', sub: '수납창구', bg: '#6a5f4c' },
   { file: 'scene_06b', num: 6, title: '약국', sub: '약국창구', bg: '#4c6a5f' },
   { file: 'scene_07', num: 7, title: '귀가 지원 및 마무리', sub: '병원 정문', bg: '#3f4f58' },
+  // 선택(둘러보기) 장소 — 필수 단계 번호 대신 "OPTION" 배지로 표시
+  { file: 'scene_opt_info_desk', num: null, title: '안내데스크', sub: '병원 로비', bg: '#5e7480' },
+  { file: 'scene_opt_store', num: null, title: '편의점', sub: '병원 1층', bg: '#7c8f98' },
+  { file: 'scene_opt_restroom', num: null, title: '화장실', sub: '대기실 인근 복도', bg: '#4c5f6a' },
+  { file: 'scene_opt_lounge', num: null, title: '휴게 라운지', sub: '창가 휴게공간', bg: '#5f9683' },
 ];
 
 function svgFor({ num, title, sub, bg }) {
   const titleSize = title.length > 8 ? 34 : 42;
+  const badge = num === null ? 'OPTION · 둘러보기' : `STAGE ${num}`;
   return `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600">
   <defs>
     <linearGradient id="vignette" x1="0" y1="0" x2="0" y2="1">
@@ -31,7 +37,7 @@ function svgFor({ num, title, sub, bg }) {
   </defs>
   <rect width="800" height="600" fill="${bg}" />
   <rect width="800" height="600" fill="url(#vignette)" />
-  <text x="50%" y="264" text-anchor="middle" font-family="-apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-size="22" letter-spacing="4" fill="#ffffff" fill-opacity="0.75">STAGE ${num}</text>
+  <text x="50%" y="264" text-anchor="middle" font-family="-apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-size="22" letter-spacing="4" fill="#ffffff" fill-opacity="0.75">${badge}</text>
   <text x="50%" y="320" text-anchor="middle" font-family="-apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-size="${titleSize}" font-weight="700" fill="#ffffff">${title}</text>
   <text x="50%" y="360" text-anchor="middle" font-family="-apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-size="20" fill="#ffffff" fill-opacity="0.7">${sub}</text>
 </svg>
