@@ -454,14 +454,13 @@
   // 종사자 명단(이수자·미이수자) 공용 컬럼 — 시도·시군구·수행기관명·기관코드·직군(직급) 모두 포함
   function personListCols() {
     return [
-      { key: 'ID', label: 'ID' }, { key: '성명', label: '성명' },
+      { key: '_no', label: '연번', num: true },
       { key: '시도', label: '시도' }, { key: '시군구', label: '시군구' },
-      { key: '기관명', label: '수행기관명' }, { key: '기관코드', label: '기관코드' },
+      { key: '기관코드', label: '기관코드' }, { key: '기관명', label: '수행기관' },
+      { key: 'ID', label: 'ID' }, { key: '성명', label: '성명' },
       { key: '직군', label: '직급' }, { key: '경력', label: '경력' },
-      { key: '이수', label: '이수여부', render: function (v) { return v ? '<span class="pill y">이수</span>' : '<span class="pill n">미이수</span>'; }, exp: function (v) { return v ? '이수' : '미이수'; } },
-      { key: '필수수료', label: '필수', render: function (v) { return v ? '<span class="pill y">수료</span>' : '<span class="pill n">미수료</span>'; }, exp: function (v) { return v ? '수료' : '미수료'; } },
-      { key: '선택차시', label: '선택차시', num: true, render: function (v, r) { return r.경력 === '경력자' ? v + ' / ' + r.필요차시 : '-'; }, exp: function (v, r) { return r.경력 === '경력자' ? v : ''; } },
-      { key: '사유', label: '미이수 사유' }
+      { key: '차수', label: '차수', num: true, render: function (v) { return v == null ? '-' : v + '차'; }, exp: function (v) { return v == null ? '' : v; } },
+      { key: '이수', label: '이수여부', render: function (v) { return v ? '<span class="pill y">이수</span>' : '<span class="pill n">미이수</span>'; }, exp: function (v) { return v ? '이수' : '미이수'; } }
     ];
   }
   function renderNotDone(c) {
@@ -494,8 +493,14 @@
         if (q && (String(r.ID).toLowerCase().indexOf(q) < 0 && String(r.성명).toLowerCase().indexOf(q) < 0 && String(r.기관명).toLowerCase().indexOf(q) < 0)) return false;
         return true;
       });
+      // 연번: 시도>시군구>기관코드>성명 순으로 고정 부여(다른 컬럼으로 재정렬해도 값은 유지)
+      filtered = filtered.slice().sort(function (a, b) {
+        return (a.시도 || '').localeCompare(b.시도 || '', 'ko') || (a.시군구 || '').localeCompare(b.시군구 || '', 'ko') ||
+          (a.기관코드 || '').localeCompare(b.기관코드 || '', 'ko') || (a.성명 || '').localeCompare(b.성명 || '', 'ko');
+      });
+      filtered.forEach(function (r, i) { r._no = i + 1; });
       var fname = iv === '이수자만' ? '이수자명단.xlsx' : (iv === '미이수자만' ? '미이수자명단.xlsx' : '이수_미이수자명단.xlsx');
-      tableHolder.innerHTML = ''; dataTable(tableHolder, cols, filtered, { pageSize: 50, sortKey: '시도', sortDir: 1 });
+      tableHolder.innerHTML = ''; dataTable(tableHolder, cols, filtered, { pageSize: 50, sortKey: '_no', sortDir: 1 });
       expHolder.innerHTML = ''; expHolder.appendChild(expBtn(filtered, cols, fname, '엑셀 다운로드(' + fmt(filtered.length) + ')'));
     }
     apply();

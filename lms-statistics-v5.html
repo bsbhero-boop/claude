@@ -116,7 +116,7 @@ kbd{background:#f0f2f7;border:1px solid #dde2ec;border-bottom-width:2px;border-r
 <body>
 <header class="top">
   <div class="wrap">
-    <h1>배움터 직무교육 통계 대시보드 <span style="font-size:12px;font-weight:600;background:rgba(255,255,255,.2);border-radius:6px;padding:2px 8px;vertical-align:middle">ver4</span></h1>
+    <h1>배움터 직무교육 통계 대시보드 <span style="font-size:12px;font-weight:600;background:rgba(255,255,255,.2);border-radius:6px;padding:2px 8px;vertical-align:middle">ver5</span></h1>
     <div class="sub">노인맞춤돌봄서비스 종사자 직무교육 · 원데이터 업로드 → 자동 집계 (모든 처리는 브라우저 로컬에서만 수행, 외부 전송 없음)</div>
     <div class="statusbar" id="statusbar"></div>
   </div>
@@ -219,6 +219,8 @@ kbd{background:#f0f2f7;border:1px solid #dde2ec;border-bottom-width:2px;border-r
     return isNaN(n) ? 0 : n;
   }
   function S(x) { return (x === null || x === undefined) ? '' : String(x).trim(); }
+  // '연도/차수'(예: "2026 / 14")에서 차수 숫자만 추출
+  function parseRound(v) { v = S(v); var i = v.indexOf('/'); if (i < 0) return null; var n = parseInt(v.slice(i + 1), 10); return isNaN(n) ? null : n; }
 
   // 직군 정규화: 이수기준이 정의된 두 직군으로 통일(광역전담 → 전담)
   function normDirect(ut) {
@@ -304,7 +306,7 @@ kbd{background:#f0f2f7;border:1px solid #dde2ec;border-bottom-width:2px;border-r
         var pm = pilMeta(name);
         if (done && pm.경력 && pm.직군) {
           o.pil.add(pm.경력 + '|' + pm.직군);
-          o.pilDetail.push({ 경력: pm.경력, 과정직군: pm.직군, 당시직군: normDirect(S(r['사용자유형'])), 당시직군원본: S(r['사용자유형']), 과정명: name, 수료일: S(r['수료일']) });
+          o.pilDetail.push({ 경력: pm.경력, 과정직군: pm.직군, 당시직군: normDirect(S(r['사용자유형'])), 당시직군원본: S(r['사용자유형']), 과정명: name, 수료일: S(r['수료일']), 차수: parseRound(r['연도/차수']) });
         }
       } else if (cat === '직무교육(선택)') {
         var sub = selBase(name);
@@ -375,11 +377,20 @@ kbd{background:#f0f2f7;border:1px solid #dde2ec;border-bottom-width:2px;border-r
       }
       var approveWould = hasRule && (career === '신규자' ? true : (selSum >= need));
 
+      // 필수과정 수료 차수(그 사람의 career+dir에 매칭되는 기록 중 최신 차수). 직군변경 승인건은 crossDone 차수 사용.
+      var pilRound = null;
+      if (o2) {
+        o2.pilDetail.forEach(function (d) {
+          if (d.경력 === career && d.과정직군 === dir && d.차수 != null) { if (pilRound == null || d.차수 > pilRound) pilRound = d.차수; }
+        });
+      }
+      if (pilRound == null && isPending && decision === 'approve' && crossDone) pilRound = crossDone.차수;
+
       persons.push({
         ID: mid, 성명: S(m['성명']), 시도: S(m['시도']), 시군구: S(m['시군구']),
         기관코드: S(m['기관코드']), 기관명: S(m['기관명']), 직군: ut, 직군정규화: dir,
         경력: career, 선임여부: S(m['선임여부']),
-        필수수료: pilDone, 선택차시: selSum, 필요차시: need, 이수: 이수,
+        필수수료: pilDone, 선택차시: selSum, 필요차시: need, 이수: 이수, 차수: pilRound,
         기준정의: hasRule, 사유: 이수 ? '' : reason,
         미응시건수: o2 ? o2.examNoShow.length : 0,
         수강기록: o2 ? 1 : 0,
@@ -1020,14 +1031,13 @@ kbd{background:#f0f2f7;border:1px solid #dde2ec;border-bottom-width:2px;border-r
   // 종사자 명단(이수자·미이수자) 공용 컬럼 — 시도·시군구·수행기관명·기관코드·직군(직급) 모두 포함
   function personListCols() {
     return [
-      { key: 'ID', label: 'ID' }, { key: '성명', label: '성명' },
+      { key: '_no', label: '연번', num: true },
       { key: '시도', label: '시도' }, { key: '시군구', label: '시군구' },
-      { key: '기관명', label: '수행기관명' }, { key: '기관코드', label: '기관코드' },
+      { key: '기관코드', label: '기관코드' }, { key: '기관명', label: '수행기관' },
+      { key: 'ID', label: 'ID' }, { key: '성명', label: '성명' },
       { key: '직군', label: '직급' }, { key: '경력', label: '경력' },
-      { key: '이수', label: '이수여부', render: function (v) { return v ? '<span class="pill y">이수</span>' : '<span class="pill n">미이수</span>'; }, exp: function (v) { return v ? '이수' : '미이수'; } },
-      { key: '필수수료', label: '필수', render: function (v) { return v ? '<span class="pill y">수료</span>' : '<span class="pill n">미수료</span>'; }, exp: function (v) { return v ? '수료' : '미수료'; } },
-      { key: '선택차시', label: '선택차시', num: true, render: function (v, r) { return r.경력 === '경력자' ? v + ' / ' + r.필요차시 : '-'; }, exp: function (v, r) { return r.경력 === '경력자' ? v : ''; } },
-      { key: '사유', label: '미이수 사유' }
+      { key: '차수', label: '차수', num: true, render: function (v) { return v == null ? '-' : v + '차'; }, exp: function (v) { return v == null ? '' : v; } },
+      { key: '이수', label: '이수여부', render: function (v) { return v ? '<span class="pill y">이수</span>' : '<span class="pill n">미이수</span>'; }, exp: function (v) { return v ? '이수' : '미이수'; } }
     ];
   }
   function renderNotDone(c) {
@@ -1060,8 +1070,14 @@ kbd{background:#f0f2f7;border:1px solid #dde2ec;border-bottom-width:2px;border-r
         if (q && (String(r.ID).toLowerCase().indexOf(q) < 0 && String(r.성명).toLowerCase().indexOf(q) < 0 && String(r.기관명).toLowerCase().indexOf(q) < 0)) return false;
         return true;
       });
+      // 연번: 시도>시군구>기관코드>성명 순으로 고정 부여(다른 컬럼으로 재정렬해도 값은 유지)
+      filtered = filtered.slice().sort(function (a, b) {
+        return (a.시도 || '').localeCompare(b.시도 || '', 'ko') || (a.시군구 || '').localeCompare(b.시군구 || '', 'ko') ||
+          (a.기관코드 || '').localeCompare(b.기관코드 || '', 'ko') || (a.성명 || '').localeCompare(b.성명 || '', 'ko');
+      });
+      filtered.forEach(function (r, i) { r._no = i + 1; });
       var fname = iv === '이수자만' ? '이수자명단.xlsx' : (iv === '미이수자만' ? '미이수자명단.xlsx' : '이수_미이수자명단.xlsx');
-      tableHolder.innerHTML = ''; dataTable(tableHolder, cols, filtered, { pageSize: 50, sortKey: '시도', sortDir: 1 });
+      tableHolder.innerHTML = ''; dataTable(tableHolder, cols, filtered, { pageSize: 50, sortKey: '_no', sortDir: 1 });
       expHolder.innerHTML = ''; expHolder.appendChild(expBtn(filtered, cols, fname, '엑셀 다운로드(' + fmt(filtered.length) + ')'));
     }
     apply();

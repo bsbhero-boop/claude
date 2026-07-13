@@ -44,6 +44,8 @@
     return isNaN(n) ? 0 : n;
   }
   function S(x) { return (x === null || x === undefined) ? '' : String(x).trim(); }
+  // '연도/차수'(예: "2026 / 14")에서 차수 숫자만 추출
+  function parseRound(v) { v = S(v); var i = v.indexOf('/'); if (i < 0) return null; var n = parseInt(v.slice(i + 1), 10); return isNaN(n) ? null : n; }
 
   // 직군 정규화: 이수기준이 정의된 두 직군으로 통일(광역전담 → 전담)
   function normDirect(ut) {
@@ -129,7 +131,7 @@
         var pm = pilMeta(name);
         if (done && pm.경력 && pm.직군) {
           o.pil.add(pm.경력 + '|' + pm.직군);
-          o.pilDetail.push({ 경력: pm.경력, 과정직군: pm.직군, 당시직군: normDirect(S(r['사용자유형'])), 당시직군원본: S(r['사용자유형']), 과정명: name, 수료일: S(r['수료일']) });
+          o.pilDetail.push({ 경력: pm.경력, 과정직군: pm.직군, 당시직군: normDirect(S(r['사용자유형'])), 당시직군원본: S(r['사용자유형']), 과정명: name, 수료일: S(r['수료일']), 차수: parseRound(r['연도/차수']) });
         }
       } else if (cat === '직무교육(선택)') {
         var sub = selBase(name);
@@ -200,11 +202,20 @@
       }
       var approveWould = hasRule && (career === '신규자' ? true : (selSum >= need));
 
+      // 필수과정 수료 차수(그 사람의 career+dir에 매칭되는 기록 중 최신 차수). 직군변경 승인건은 crossDone 차수 사용.
+      var pilRound = null;
+      if (o2) {
+        o2.pilDetail.forEach(function (d) {
+          if (d.경력 === career && d.과정직군 === dir && d.차수 != null) { if (pilRound == null || d.차수 > pilRound) pilRound = d.차수; }
+        });
+      }
+      if (pilRound == null && isPending && decision === 'approve' && crossDone) pilRound = crossDone.차수;
+
       persons.push({
         ID: mid, 성명: S(m['성명']), 시도: S(m['시도']), 시군구: S(m['시군구']),
         기관코드: S(m['기관코드']), 기관명: S(m['기관명']), 직군: ut, 직군정규화: dir,
         경력: career, 선임여부: S(m['선임여부']),
-        필수수료: pilDone, 선택차시: selSum, 필요차시: need, 이수: 이수,
+        필수수료: pilDone, 선택차시: selSum, 필요차시: need, 이수: 이수, 차수: pilRound,
         기준정의: hasRule, 사유: 이수 ? '' : reason,
         미응시건수: o2 ? o2.examNoShow.length : 0,
         수강기록: o2 ? 1 : 0,
