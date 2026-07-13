@@ -1,7 +1,7 @@
 # lms-src — 직무교육 통계 대시보드 소스
 
-`/lms-statistics-v5.html`(단일 HTML 앱)을 생성하는 소스입니다. 일반 사용자는 빌드된
-`lms-statistics-v5.html` 하나만 있으면 되고, 이 폴더는 **수정·재빌드**할 때만 필요합니다.
+`/lms-statistics-v6.html`(단일 HTML 앱)을 생성하는 소스입니다. 일반 사용자는 빌드된
+`lms-statistics-v6.html` 하나만 있으면 되고, 이 폴더는 **수정·재빌드**할 때만 필요합니다.
 
 ## 구성
 
@@ -12,14 +12,14 @@
 | `app.css` | 스타일 |
 | `page.html` | HTML 골격(빌드 시 마커 치환) |
 | `vendor/xlsx.full.min.js` | SheetJS (엑셀 파싱 라이브러리, 오프라인 내장용) |
-| `build.js` | 위 파일들을 합쳐 `../lms-statistics-v5.html` 단일 파일 생성 |
+| `build.js` | 위 파일들을 합쳐 `../lms-statistics-v6.html` 단일 파일 생성 |
 | `e2e.js`, `persist.js` | 실데이터 기반 브라우저 검증 스크립트(Playwright) |
 
 ## 빌드
 
 ```bash
 cd lms-src
-node build.js          # → ../lms-statistics-v5.html 생성
+node build.js          # → ../lms-statistics-v6.html 생성
 ```
 
 `vendor/xlsx.full.min.js`를 base64로 인코딩해 HTML에 내장하므로, 결과 파일은
@@ -47,3 +47,8 @@ node e2e.js            # 실데이터 업로드 → KPI 일치 검증
 - 학생 데이터의 `수료여부=수료`를 그대로 사용, `상태=수강취소`는 제외
 - 같은 (ID, 과정)이 여러 차수에 있으면 한 번이라도 수료면 수료로 인정
 - 기준·차시는 앱의 **설정** 탭에서 코드 수정 없이 변경 가능
+- **차수/이수일자**(persons.차수·이수일자): 그 사람의 career+dir에 매칭되는 필수과정
+  수료 기록 중 최신 차수, 동일 차수면 최신 수료일(compute.js 205~213행 `pilRound`/`pilDate`).
+  직군변경 승인건은 `crossDone`의 차수/수료일로 대체. 이수자·미이수자 명단(app.js
+  `personListCols`/`renderNotDone`)의 연번·정렬·다운로드 순서가 이 값(차수→이수일자
+  오름차순) 기준으로 고정됨

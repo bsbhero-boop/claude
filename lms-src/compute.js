@@ -202,20 +202,23 @@
       }
       var approveWould = hasRule && (career === '신규자' ? true : (selSum >= need));
 
-      // 필수과정 수료 차수(그 사람의 career+dir에 매칭되는 기록 중 최신 차수). 직군변경 승인건은 crossDone 차수 사용.
-      var pilRound = null;
+      // 필수과정 수료 차수/이수일자(그 사람의 career+dir에 매칭되는 기록 중 최신 차수, 동일 차수면 최신 수료일).
+      // 직군변경 승인건은 crossDone의 차수/수료일 사용.
+      var pilRound = null, pilDate = '';
       if (o2) {
         o2.pilDetail.forEach(function (d) {
-          if (d.경력 === career && d.과정직군 === dir && d.차수 != null) { if (pilRound == null || d.차수 > pilRound) pilRound = d.차수; }
+          if (d.경력 === career && d.과정직군 === dir && d.차수 != null) {
+            if (pilRound == null || d.차수 > pilRound || (d.차수 === pilRound && d.수료일 > pilDate)) { pilRound = d.차수; pilDate = d.수료일 || ''; }
+          }
         });
       }
-      if (pilRound == null && isPending && decision === 'approve' && crossDone) pilRound = crossDone.차수;
+      if (pilRound == null && isPending && decision === 'approve' && crossDone) { pilRound = crossDone.차수; pilDate = crossDone.수료일 || ''; }
 
       persons.push({
         ID: mid, 성명: S(m['성명']), 시도: S(m['시도']), 시군구: S(m['시군구']),
         기관코드: S(m['기관코드']), 기관명: S(m['기관명']), 직군: ut, 직군정규화: dir,
         경력: career, 선임여부: S(m['선임여부']),
-        필수수료: pilDone, 선택차시: selSum, 필요차시: need, 이수: 이수, 차수: pilRound,
+        필수수료: pilDone, 선택차시: selSum, 필요차시: need, 이수: 이수, 차수: pilRound, 이수일자: pilDate,
         기준정의: hasRule, 사유: 이수 ? '' : reason,
         미응시건수: o2 ? o2.examNoShow.length : 0,
         수강기록: o2 ? 1 : 0,

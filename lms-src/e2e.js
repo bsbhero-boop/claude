@@ -1,7 +1,7 @@
 const { chromium } = require('playwright');
 const path = require('path');
 const UP = '/root/.claude/uploads/cd57ac93-8f4d-5823-bb34-c33379307f24/';
-const HTML = 'file://' + path.resolve(__dirname, '..', 'lms-statistics-v5.html');
+const HTML = 'file://' + path.resolve(__dirname, '..', 'lms-statistics-v6.html');
 const MEMBER = UP + 'd7a572fb-____.xlsx';
 const STUDENTS = ['4ecf5ad8-__________20260626.____2.xls', '186cd960-__________20260626.____3.xls', '835ae5a9-__________20260626.____4.xls'].map(f => UP + f);
 
@@ -84,10 +84,10 @@ const STUDENTS = ['4ecf5ad8-__________20260626.____2.xls', '186cd960-__________2
     console.log(`tab [${label}] rendered, table rows on screen: ${cells}`);
   }
 
-  // 이수자·미이수자 명단: 이수자만 필터 → 엑셀 다운로드 → 컬럼(연번·시도·시군구·기관코드·수행기관·ID·성명·직급·경력·차수·이수여부) 검증
+  // 이수자·미이수자 명단: 이수자만 필터 → 엑셀 다운로드 → 컬럼(연번·시도·시군구·기관코드·수행기관·ID·성명·직급·경력·차수·이수일자·이수여부) 검증
   await page.click('button.tab:has-text("이수자·미이수자 명단")'); await page.waitForTimeout(150);
   const rosterCols = await page.$$eval('#content thead th', ths => ths.map(t => t.textContent.trim()));
-  const needOrdered = ['연번', '시도', '시군구', '기관코드', '수행기관', 'ID', '성명', '직급', '경력', '차수', '이수여부'];
+  const needOrdered = ['연번', '시도', '시군구', '기관코드', '수행기관', 'ID', '성명', '직급', '경력', '차수', '이수일자', '이수여부'];
   const colsNoArrow = rosterCols.map(c => c.replace(/\s*[▴▾]$/, ''));
   const orderMatches = JSON.stringify(colsNoArrow) === JSON.stringify(needOrdered);
   console.log('종사자 명단 컬럼:', JSON.stringify(rosterCols), '| 요청 순서와 일치:', orderMatches ? '✅' : '❌');
@@ -114,14 +114,23 @@ const STUDENTS = ['4ecf5ad8-__________20260626.____2.xls', '186cd960-__________2
   const rHeader = raoa[0]; const rRows = raoa.slice(1);
   const headerMatches = JSON.stringify(rHeader) === JSON.stringify(needOrdered);
   const idxNo = rHeader.indexOf('연번'); const idxOrgCode = rHeader.indexOf('기관코드');
-  const idxDone = rHeader.indexOf('이수여부'); const idxRound = rHeader.indexOf('차수');
+  const idxDone = rHeader.indexOf('이수여부'); const idxRound = rHeader.indexOf('차수'); const idxDate = rHeader.indexOf('이수일자');
   const allDone = rRows.every(r => r[idxDone] === '이수');
   const orgCodeFilled = rRows.every(r => r[idxOrgCode] && String(r[idxOrgCode]).trim() !== '');
   const roundFilled = rRows.every(r => r[idxRound] !== '' && r[idxRound] != null); // 이수자는 전원 필수과정 수료했으므로 차수 있어야 함
+  const dateFilled = rRows.every(r => r[idxDate] && String(r[idxDate]).trim() !== '');
   const noSequential = rRows.every((r, i) => Number(r[idxNo]) === i + 1);
+  // 정렬 검증: 차수 오름차순, 동일 차수 내에서는 이수일자 오름차순
+  let sortOk = true;
+  for (let i = 1; i < rRows.length; i++) {
+    const pr = Number(rRows[i - 1][idxRound]), cr = Number(rRows[i][idxRound]);
+    if (cr < pr) { sortOk = false; break; }
+    if (cr === pr && String(rRows[i][idxDate]) < String(rRows[i - 1][idxDate])) { sortOk = false; break; }
+  }
   console.log('다운로드 엑셀 검증: 행수', rRows.length, '| 헤더순서=', headerMatches ? '✅' : '❌', '| 연번 1..N 연속=', noSequential ? '✅' : '❌',
-    '| 전원 이수=', allDone ? '✅' : '❌', '| 기관코드 전원 채움=', orgCodeFilled ? '✅' : '❌', '| 차수 전원 채움=', roundFilled ? '✅' : '❌');
-  if (!headerMatches || !noSequential || !allDone || !orgCodeFilled || !roundFilled || rRows.length === 0) ok = false;
+    '| 전원 이수=', allDone ? '✅' : '❌', '| 기관코드 전원 채움=', orgCodeFilled ? '✅' : '❌', '| 차수 전원 채움=', roundFilled ? '✅' : '❌',
+    '| 이수일자 전원 채움=', dateFilled ? '✅' : '❌', '| 차수→이수일자 오름차순 정렬=', sortOk ? '✅' : '❌');
+  if (!headerMatches || !noSequential || !allDone || !orgCodeFilled || !roundFilled || !dateFilled || !sortOk || rRows.length === 0) ok = false;
 
   // 미응시·재응시 탭에서 '재응시 필요만' 필터 + 행 수 확인
   await page.click('button.tab:has-text("미응시·재응시")');

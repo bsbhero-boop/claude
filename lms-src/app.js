@@ -460,6 +460,7 @@
       { key: 'ID', label: 'ID' }, { key: '성명', label: '성명' },
       { key: '직군', label: '직급' }, { key: '경력', label: '경력' },
       { key: '차수', label: '차수', num: true, render: function (v) { return v == null ? '-' : v + '차'; }, exp: function (v) { return v == null ? '' : v; } },
+      { key: '이수일자', label: '이수일자', render: function (v) { return v || '-'; }, exp: function (v) { return v || ''; } },
       { key: '이수', label: '이수여부', render: function (v) { return v ? '<span class="pill y">이수</span>' : '<span class="pill n">미이수</span>'; }, exp: function (v) { return v ? '이수' : '미이수'; } }
     ];
   }
@@ -476,7 +477,7 @@
     // 기본값: 미이수자만(기존 동작 유지)
     fb.sels['이수여부'].value = '미이수자만';
     var head = el('div', { class: 'head' });
-    head.appendChild(el('div', { html: '<h2>이수자·미이수자 명단</h2><p class="desc">대상자의 이수/미이수 현황. 이수여부 필터로 이수자 명단만 골라 다운로드할 수 있습니다.</p>' }));
+    head.appendChild(el('div', { html: '<h2>이수자·미이수자 명단</h2><p class="desc">대상자의 이수/미이수 현황. 이수여부 필터로 이수자 명단만 골라 다운로드할 수 있습니다. 연번·정렬은 차수 → 이수일자 순입니다. <b>이수일자는 필수과정을 수료 확정한 날짜</b>이며, 경력자는 이후 선택과목을 채워 최종 이수가 확정될 수 있어 실제 이수 확정일과 다를 수 있습니다.</p>' }));
     var expHolder = el('div'); head.appendChild(expHolder);
     card.appendChild(head); card.appendChild(fb.node);
     var tableHolder = el('div'); card.appendChild(tableHolder); c.appendChild(card);
@@ -493,10 +494,13 @@
         if (q && (String(r.ID).toLowerCase().indexOf(q) < 0 && String(r.성명).toLowerCase().indexOf(q) < 0 && String(r.기관명).toLowerCase().indexOf(q) < 0)) return false;
         return true;
       });
-      // 연번: 시도>시군구>기관코드>성명 순으로 고정 부여(다른 컬럼으로 재정렬해도 값은 유지)
+      // 연번: 차수 오름차순 → 동일 차수 내 이수일자 오름차순 → 성명 순으로 고정 부여(다른 컬럼으로 재정렬해도 값은 유지)
+      // 차수/이수일자가 없는 사람(직군변경 미검토·반려 등)은 맨 뒤로 보낸다.
       filtered = filtered.slice().sort(function (a, b) {
-        return (a.시도 || '').localeCompare(b.시도 || '', 'ko') || (a.시군구 || '').localeCompare(b.시군구 || '', 'ko') ||
-          (a.기관코드 || '').localeCompare(b.기관코드 || '', 'ko') || (a.성명 || '').localeCompare(b.성명 || '', 'ko');
+        var ar = a.차수 == null ? Infinity : a.차수, br = b.차수 == null ? Infinity : b.차수;
+        if (ar !== br) return ar - br;
+        var ad = a.이수일자 || '￿', bd = b.이수일자 || '￿';
+        return ad !== bd ? (ad < bd ? -1 : 1) : (a.성명 || '').localeCompare(b.성명 || '', 'ko');
       });
       filtered.forEach(function (r, i) { r._no = i + 1; });
       var fname = iv === '이수자만' ? '이수자명단.xlsx' : (iv === '미이수자만' ? '미이수자명단.xlsx' : '이수_미이수자명단.xlsx');
