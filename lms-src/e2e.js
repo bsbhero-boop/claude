@@ -132,6 +132,34 @@ const STUDENTS = ['4ecf5ad8-__________20260626.____2.xls', '186cd960-__________2
     '| 이수일자 전원 채움=', dateFilled ? '✅' : '❌', '| 차수→이수일자 오름차순 정렬=', sortOk ? '✅' : '❌');
   if (!headerMatches || !noSequential || !allDone || !orgCodeFilled || !roundFilled || !dateFilled || !sortOk || rRows.length === 0) ok = false;
 
+  // 미이수자만 다운로드: 차수가 없는(빈) 행이 '연속된 꼬리'로만 나오는지(중간 삽입 금지) + 비어있지 않은 구간은 차수 오름차순
+  await page.selectOption('#content select >> nth=0', { label: '미이수자만' });
+  await page.waitForTimeout(200);
+  const [dlNd] = await Promise.all([
+    page.waitForEvent('download', { timeout: 10000 }),
+    page.click('#content .head button.btn.sec')
+  ]);
+  const ndPath = path.join(require('os').tmpdir(), 'roster_nd.xlsx');
+  await dlNd.saveAs(ndPath);
+  const nwb = XLSXNODE.readFile(ndPath); const nws = nwb.Sheets[nwb.SheetNames[0]];
+  const naoa = XLSXNODE.utils.sheet_to_json(nws, { header: 1 });
+  const nHeader = naoa[0]; const nRows = naoa.slice(1);
+  const nIdxRound = nHeader.indexOf('차수');
+  let sawNull = false, nullTailOk = true, ndSortOk = true, nullCnt = 0;
+  for (let i = 0; i < nRows.length; i++) {
+    const raw = nRows[i][nIdxRound];
+    const isNull = raw === '' || raw == null;
+    if (isNull) { sawNull = true; nullCnt++; continue; }
+    if (sawNull) { nullTailOk = false; break; } // 빈 차수 뒤에 다시 차수가 나오면 실패
+    if (i > 0 && !sawNull) {
+      const prevRaw = nRows[i - 1][nIdxRound];
+      if (prevRaw !== '' && prevRaw != null && Number(raw) < Number(prevRaw)) { ndSortOk = false; break; }
+    }
+  }
+  console.log('미이수자 다운로드 검증: 행수', nRows.length, '| 차수없음(null)', nullCnt, '건 | null은 맨뒤 연속=', nullTailOk ? '✅' : '❌', '| 비어있지 않은 구간 차수 오름차순=', ndSortOk ? '✅' : '❌');
+  if (!nullTailOk || !ndSortOk || nRows.length === 0) ok = false;
+  // 다음 검증들을 위해 필터를 이수자만으로 되돌릴 필요는 없음(이후 검증은 다른 탭 사용)
+
   // 미응시·재응시 탭에서 '재응시 필요만' 필터 + 행 수 확인
   await page.click('button.tab:has-text("미응시·재응시")');
   await page.waitForTimeout(150);
