@@ -116,7 +116,7 @@ kbd{background:#f0f2f7;border:1px solid #dde2ec;border-bottom-width:2px;border-r
 <body>
 <header class="top">
   <div class="wrap">
-    <h1>배움터 직무교육 통계 대시보드 <span style="font-size:12px;font-weight:600;background:rgba(255,255,255,.2);border-radius:6px;padding:2px 8px;vertical-align:middle">ver6</span></h1>
+    <h1>배움터 직무교육 통계 대시보드 <span style="font-size:12px;font-weight:600;background:rgba(255,255,255,.2);border-radius:6px;padding:2px 8px;vertical-align:middle">ver7</span></h1>
     <div class="sub">노인맞춤돌봄서비스 종사자 직무교육 · 원데이터 업로드 → 자동 집계 (모든 처리는 브라우저 로컬에서만 수행, 외부 전송 없음)</div>
     <div class="statusbar" id="statusbar"></div>
   </div>
@@ -889,34 +889,107 @@ kbd{background:#f0f2f7;border:1px solid #dde2ec;border-bottom-width:2px;border-r
   function getAlloc() { if (!state.config.alloc) state.config.alloc = {}; return state.config.alloc; }
   function saveAllocAndRender() { idbSet('config', state.config); renderTab(); }
   function renderRateTable() {
-    var bg = {}; state.result.byGroup.forEach(function (g) { bg[g.key] = g; });
-    function cell(dir, car) { var g = bg[dir + ' / ' + car]; return g ? g : { 이수자: 0, 대상자: 0 }; }
     var DIRS = [['전담사회복지사', '전담사회복지사'], ['생활지원사', '생활지원사']];
     var alloc = getAlloc();
+
+    // 산출기간: 이수인원(A) 집계 범위. mode: all(전체) / round(차수) / date(이수일자)
+    if (!state.config.period) state.config.period = { mode: 'all', from: '', to: '' };
+    var period = state.config.period;
+    function inPeriod(p) {
+      if (period.mode === 'round') {
+        var f = (period.from !== '' && period.from != null) ? +period.from : null;
+        var t = (period.to !== '' && period.to != null) ? +period.to : null;
+        if (f == null && t == null) return true;
+        if (p.차수 == null) return false;
+        if (f != null && p.차수 < f) return false;
+        if (t != null && p.차수 > t) return false;
+        return true;
+      }
+      if (period.mode === 'date') {
+        var f2 = period.from || '', t2 = period.to || '';
+        if (!f2 && !t2) return true;
+        if (!p.이수일자) return false;
+        if (f2 && p.이수일자 < f2) return false;
+        if (t2 && p.이수일자 > t2) return false;
+        return true;
+      }
+      return true;
+    }
+    function periodLabel() {
+      if (period.mode === 'round') {
+        var f = period.from, t = period.to;
+        if (!f && !t) return '전체 (차수 미지정)';
+        return (f ? f + '차' : '처음') + ' ~ ' + (t ? t + '차' : '최신') + ' (차수 기준)';
+      }
+      if (period.mode === 'date') {
+        var f2 = period.from, t2 = period.to;
+        if (!f2 && !t2) return '전체 (기간 미지정)';
+        return (f2 || '처음') + ' ~ ' + (t2 || '최신') + ' (이수일자 기준)';
+      }
+      return '전체';
+    }
+    var plabel = periodLabel();
+
+    // 이수인원(A)은 산출기간 내 이수자만, 교육대상(분모)은 전체 기준
+    var ppl = (state.result.persons || []).filter(function (p) { return p.기준정의; });
     var rows = DIRS.map(function (d) {
-      var nv = cell(d[0], '신규자'), ex = cell(d[0], '경력자');
-      var a = nv.이수자 + ex.이수자; var target = nv.대상자 + ex.대상자;
+      var nvA = 0, exA = 0, target = 0;
+      ppl.forEach(function (p) {
+        if (p.직군정규화 !== d[0]) return;
+        target++;
+        if (!p.이수 || !inPeriod(p)) return;
+        if (p.경력 === '신규자') nvA++; else if (p.경력 === '경력자') exA++;
+      });
       var al = alloc[d[0]] || {}; var B = parseInt(al.배정) || 0, C = parseInt(al.채용) || 0;
-      return { dir: d[0], 신규: nv.이수자, 경력: ex.이수자, 소계: a, 교육대상: target, 배정: B, 채용: C };
+      return { dir: d[0], 신규: nvA, 경력: exA, 소계: nvA + exA, 교육대상: target, 배정: B, 채용: C };
     });
     var tot = rows.reduce(function (o, r) { return { 신규: o.신규 + r.신규, 경력: o.경력 + r.경력, 소계: o.소계 + r.소계, 교육대상: o.교육대상 + r.교육대상, 배정: o.배정 + r.배정, 채용: o.채용 + r.채용 }; }, { 신규: 0, 경력: 0, 소계: 0, 교육대상: 0, 배정: 0, 채용: 0 });
 
     var card = el('div', { class: 'card' });
     var head = el('div', { class: 'head' });
-    head.appendChild(el('div', { html: '<h2>이수율 현황표</h2><p class="desc">교육대상·배정인원(B)·채용인원(C) 대비 이수율. 배정/채용 인원은 직접 입력하세요.</p>' }));
+    head.appendChild(el('div', { html: '<h2>이수율 현황표</h2><p class="desc">교육대상·배정인원(B)·채용인원(C) 대비 이수율. 산출기간은 이수인원(A)에만 적용되고, 교육대상·배정·채용은 전체 기준입니다.</p>' }));
     var expBtnRows = rows.concat([{ dir: '총계', 신규: tot.신규, 경력: tot.경력, 소계: tot.소계, 교육대상: tot.교육대상, 배정: tot.배정, 채용: tot.채용 }]).map(function (r) {
       return { 직군: r.dir, 신규자: r.신규, 경력자: r.경력, 이수소계: r.소계, 교육대상: r.교육대상, 배정인원: r.배정, 채용인원: r.채용,
         대상대비: r.교육대상 ? (100 * r.소계 / r.교육대상).toFixed(1) : '', 배정대비: r.배정 ? (100 * r.소계 / r.배정).toFixed(1) : '', 채용대비: r.채용 ? (100 * r.소계 / r.채용).toFixed(1) : '' };
     });
-    head.appendChild(expBtn(expBtnRows, [
-      { key: '직군', label: '직군' }, { key: '신규자', label: '신규자' }, { key: '경력자', label: '경력자' }, { key: '이수소계', label: '이수인원(A)' },
-      { key: '교육대상', label: '교육대상' }, { key: '배정인원', label: '배정인원(B)' }, { key: '채용인원', label: '채용인원(C)' },
-      { key: '대상대비', label: '대상대비(%)' }, { key: '배정대비', label: 'A/B(%)' }, { key: '채용대비', label: 'A/C(%)' }
-    ], '이수율_현황표.xlsx'));
+    var eb = el('button', { class: 'btn sec sm' }, '엑셀 다운로드');
+    eb.onclick = function () {
+      var aoa = [['이수율 현황표'], ['산출기간: ' + plabel], ['배정·채용 기준: ' + (state.config.allocNote || '-')], [],
+        ['직군', '신규자', '경력자', '이수인원(A)', '교육대상', '배정인원(B)', '채용인원(C)', '대상대비(%)', 'A/B(%)', 'A/C(%)']];
+      expBtnRows.forEach(function (r) { aoa.push([r.직군, r.신규자, r.경력자, r.이수소계, r.교육대상, r.배정인원, r.채용인원, r.대상대비, r.배정대비, r.채용대비]); });
+      var ws = XLSX.utils.aoa_to_sheet(aoa); var wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, '이수율현황표'); XLSX.writeFile(wb, '이수율_현황표.xlsx');
+    };
+    head.appendChild(eb);
     card.appendChild(head);
 
+    // 산출기간 설정 바
+    var pbar = el('div', { class: 'toolbar' });
+    pbar.appendChild(el('span', { class: 'hint' }, '산출기간:'));
+    var modeSel = el('select', { id: 'ratePeriodMode' });
+    [['all', '전체'], ['round', '차수 기준'], ['date', '이수일자 기준']].forEach(function (o) { modeSel.appendChild(el('option', { value: o[0] }, o[1])); });
+    modeSel.value = period.mode;
+    modeSel.onchange = function () { period.mode = modeSel.value; saveAllocAndRender(); };
+    pbar.appendChild(modeSel);
+    if (period.mode === 'round') {
+      var maxR = (state.coverage && state.coverage.summary && state.coverage.summary.최신차수) || '';
+      var rf = el('input', { type: 'number', id: 'ratePeriodFrom', placeholder: '시작차수', style: 'width:100px' }); rf.value = period.from || '';
+      var rt = el('input', { type: 'number', id: 'ratePeriodTo', placeholder: '끝차수', style: 'width:100px' }); rt.value = period.to || '';
+      rf.onchange = function () { period.from = rf.value; saveAllocAndRender(); };
+      rt.onchange = function () { period.to = rt.value; saveAllocAndRender(); };
+      pbar.appendChild(rf); pbar.appendChild(el('span', { class: 'hint' }, '~')); pbar.appendChild(rt);
+      if (maxR) pbar.appendChild(el('span', { class: 'hint' }, '(데이터 보유: 1~' + maxR + '차)'));
+    } else if (period.mode === 'date') {
+      var df = el('input', { type: 'date', id: 'ratePeriodFrom' }); df.value = period.from || '';
+      var dt = el('input', { type: 'date', id: 'ratePeriodTo' }); dt.value = period.to || '';
+      df.onchange = function () { period.from = df.value; saveAllocAndRender(); };
+      dt.onchange = function () { period.to = dt.value; saveAllocAndRender(); };
+      pbar.appendChild(df); pbar.appendChild(el('span', { class: 'hint' }, '~')); pbar.appendChild(dt);
+      pbar.appendChild(el('span', { class: 'hint' }, '(이수일자 = 필수과정 수료 확정일)'));
+    }
+    card.appendChild(pbar);
+
     var hd = el('div', { class: 'note info' });
-    hd.innerHTML = '(이수인원) 총 <b>' + fmt(tot.소계) + '명</b> (전담사회복지사 ' + fmt(rows[0].소계) + '명, 생활지원사 ' + fmt(rows[1].소계) + '명)';
+    hd.innerHTML = '(이수인원) 총 <b>' + fmt(tot.소계) + '명</b> (전담사회복지사 ' + fmt(rows[0].소계) + '명, 생활지원사 ' + fmt(rows[1].소계) + '명) · 산출기간: <b>' + plabel + '</b>';
     card.appendChild(hd);
 
     var tw = el('div', { class: 'tablewrap' }); var table = el('table');

@@ -1,7 +1,7 @@
 const { chromium } = require('playwright');
 const path = require('path');
 const UP = '/root/.claude/uploads/cd57ac93-8f4d-5823-bb34-c33379307f24/';
-const HTML = 'file://' + path.resolve(__dirname, '..', 'lms-statistics-v6.html');
+const HTML = 'file://' + path.resolve(__dirname, '..', 'lms-statistics-v7.html');
 const MEMBER = UP + 'd7a572fb-____.xlsx';
 const STUDENTS = ['4ecf5ad8-__________20260626.____2.xls', '186cd960-__________20260626.____3.xls', '835ae5a9-__________20260626.____4.xls'].map(f => UP + f);
 
@@ -218,6 +218,46 @@ const STUDENTS = ['4ecf5ad8-__________20260626.____2.xls', '186cd960-__________2
   const hasRatio = /이수인원/.test(tableTxt) && tableTxt.includes('A/B');
   console.log('이수율 현황표: 배정입력 저장=', JSON.stringify(alloc), '| 표 구조=', hasRatio ? '✅' : '❌');
   if (!(alloc && alloc.배정 === 2716) || !hasRatio) ok = false;
+
+  // 이수율 현황표 산출기간 검증: 차수 범위 / 이수일자 범위 / 전체 복귀
+  async function rateNoteTotal() {
+    return page.$$eval('#content .note.info', ns => {
+      const n = ns.find(x => x.textContent.includes('(이수인원)'));
+      const m = n && n.textContent.match(/총\s*([\d,]+)\s*명/);
+      return m ? Number(m[1].replace(/,/g, '')) : -1;
+    });
+  }
+  const perExp = await page.evaluate(() => {
+    const ppl = window.__LMS_APP.result.persons.filter(p => p.기준정의);
+    return {
+      round15: ppl.filter(p => p.이수 && p.차수 != null && p.차수 >= 1 && p.차수 <= 5).length,
+      date: ppl.filter(p => p.이수 && p.이수일자 && p.이수일자 >= '2026-01-01' && p.이수일자 <= '2026-02-06').length,
+      all: ppl.filter(p => p.이수).length
+    };
+  });
+  await page.selectOption('#ratePeriodMode', 'round'); await page.waitForTimeout(250);
+  await page.fill('#ratePeriodFrom', '1'); await page.dispatchEvent('#ratePeriodFrom', 'change'); await page.waitForTimeout(250);
+  await page.fill('#ratePeriodTo', '5'); await page.dispatchEvent('#ratePeriodTo', 'change'); await page.waitForTimeout(300);
+  const noteRound = await rateNoteTotal();
+  const roundOk = noteRound === perExp.round15 && perExp.round15 > 0 && perExp.round15 < perExp.all;
+  console.log('산출기간(차수 1~5차): 표 이수인원', noteRound, '| 기대', perExp.round15, '| 전체', perExp.all, roundOk ? '✅' : '❌');
+  if (!roundOk) ok = false;
+  await page.selectOption('#ratePeriodMode', 'date'); await page.waitForTimeout(250);
+  await page.fill('#ratePeriodFrom', '2026-01-01'); await page.dispatchEvent('#ratePeriodFrom', 'change'); await page.waitForTimeout(250);
+  await page.fill('#ratePeriodTo', '2026-02-06'); await page.dispatchEvent('#ratePeriodTo', 'change'); await page.waitForTimeout(300);
+  const noteDate = await rateNoteTotal();
+  const dateOk = noteDate === perExp.date && perExp.date > 0 && perExp.date < perExp.all;
+  console.log('산출기간(이수일자 2026-01-01~02-06): 표 이수인원', noteDate, '| 기대', perExp.date, dateOk ? '✅' : '❌');
+  if (!dateOk) ok = false;
+  // 산출기간 라벨이 화면에 표기되는지
+  const labelShown = await page.$$eval('#content .note.info', ns => ns.some(x => /산출기간:/.test(x.textContent)));
+  console.log('산출기간 라벨 표기:', labelShown ? '✅' : '❌');
+  if (!labelShown) ok = false;
+  await page.selectOption('#ratePeriodMode', 'all'); await page.waitForTimeout(300);
+  const noteAll = await rateNoteTotal();
+  const allOk = noteAll === perExp.all && perExp.all === kpi.이수자;
+  console.log('산출기간(전체 복귀): 표 이수인원', noteAll, '| KPI 이수자', kpi.이수자, allOk ? '✅' : '❌');
+  if (!allOk) ok = false;
 
   console.log('\nconsole errors:', errors.length, errors.slice(0, 5));
   console.log('\nRESULT:', ok && errors.length === 0 ? 'PASS ✅' : 'CHECK ⚠️');
