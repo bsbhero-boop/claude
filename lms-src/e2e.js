@@ -1,7 +1,7 @@
 const { chromium } = require('playwright');
 const path = require('path');
 const UP = '/root/.claude/uploads/cd57ac93-8f4d-5823-bb34-c33379307f24/';
-const HTML = 'file://' + path.resolve(__dirname, '..', 'lms-statistics-v7.html');
+const HTML = 'file://' + path.resolve(__dirname, '..', 'lms-statistics-v8.html');
 const MEMBER = UP + 'd7a572fb-____.xlsx';
 const STUDENTS = ['4ecf5ad8-__________20260626.____2.xls', '186cd960-__________20260626.____3.xls', '835ae5a9-__________20260626.____4.xls'].map(f => UP + f);
 
@@ -76,6 +76,34 @@ const STUDENTS = ['4ecf5ad8-__________20260626.____2.xls', '186cd960-__________2
     '| 차수부여:', v3.차수있음 > 0 ? '✅' : '❌');
   console.log('중복이수: 건수', v3.중복건수, '인원', v3.중복인원, '필수', v3.중복필수, (v3.중복건수 > 0 && v3.dupRows === v3.중복건수 && v3.dupBad === 0) ? '✅' : '❌');
   if (v3.이수자중재응시 !== 0 || !(v3.차수있음 > 0) || !(v3.중복건수 > 0) || v3.dupBad !== 0) ok = false;
+
+  // v8: 과정 유형/구분(원과정·재응시) 분리 + 중복유형(재수강 다차수/동일차수) 검증
+  const v8 = await page.evaluate(() => {
+    const R = window.__LMS_APP.result;
+    const cr = R.courseRows;
+    const retake = cr.filter(r => r.구분 === '재응시');
+    return {
+      courseTotal: cr.length,
+      retakeCnt: retake.length,
+      retakeAllHaveBase: retake.every(r => r.원과정 && !/_재응시$/.test(r.원과정)),
+      typesOk: cr.every(r => ['필수·신규', '필수·경력', '선택', '기타'].includes(r.유형)),
+      origNoSuffix: cr.filter(r => r.구분 === '원과정').every(r => !/_재응시$|_열람전용$/.test(r.과정명)),
+      dupSame: R.kpi.중복동일차수,
+      dupSameRows: R.duplicateRows.filter(d => d.중복유형 === '동일차수 중복').length,
+      dupMulti: R.duplicateRows.filter(d => d.중복유형 === '재수강(다차수)').length
+    };
+  });
+  console.log('과정 분류: 전체', v8.courseTotal, '| 재응시', v8.retakeCnt, '| 재응시 원과정명 보유:', v8.retakeAllHaveBase ? '✅' : '❌',
+    '| 유형값 유효:', v8.typesOk ? '✅' : '❌', '| 원과정에 접미사 없음:', v8.origNoSuffix ? '✅' : '❌');
+  console.log('중복유형: 동일차수', v8.dupSame, '| 재수강(다차수)', v8.dupMulti, '| 합계=중복건수:',
+    (v8.dupSame === v8.dupSameRows && v8.dupSame + v8.dupMulti === v3.중복건수) ? '✅' : '❌');
+  if (!v8.retakeAllHaveBase || !v8.typesOk || !v8.origNoSuffix || v8.retakeCnt === 0 || v8.dupSame !== v8.dupSameRows || v8.dupSame + v8.dupMulti !== v3.중복건수) ok = false;
+  // 과목별 현황 탭: 구분=재응시 필터 → 재응시 과정 수와 일치
+  await page.click('button.tab:has-text("과목별 현황")'); await page.waitForTimeout(200);
+  await page.selectOption('#content select >> nth=1', { label: '재응시' }); await page.waitForTimeout(250);
+  const cTotal = await page.$eval('#content .pager span', s => s.textContent).catch(() => '');
+  console.log('과목별 구분=재응시 필터 건수:', cTotal, '(기대 총 ' + v8.retakeCnt + '건)', cTotal.includes(String(v8.retakeCnt)) ? '✅' : '❌');
+  if (!cTotal.includes(String(v8.retakeCnt))) ok = false;
 
   for (const label of ['데이터 현황', '이수율 현황', '이수자·미이수자 명단', '미응시·재응시', '보류·직군변경', '중복자 확인', '과목별 현황', '개인 조회', '설정·도움말', '요약']) {
     await page.click(`button.tab:has-text("${label}")`);

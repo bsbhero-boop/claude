@@ -71,6 +71,17 @@
     return { 경력: 경력, 직군: 직군 };
   }
 
+  // 과정 유형/구분 분류. 유형: 필수·신규/필수·경력/선택/기타, 구분: 원과정/재응시/열람전용.
+  // 재응시(_재응시)·열람전용(_열람전용) 과정은 원과정명을 함께 반환해 과정 단위 통계에서 분리 가능하게 함.
+  function courseType(name, cat) {
+    name = S(name);
+    var 구분 = /_재응시$/.test(name) ? '재응시' : (/_열람전용$/.test(name) ? '열람전용' : '원과정');
+    var 유형;
+    if (cat === '직무교육(선택)') 유형 = '선택';
+    else { var pm = pilMeta(name); 유형 = pm.경력 === '신규자' ? '필수·신규' : (pm.경력 === '경력자' ? '필수·경력' : '기타'); }
+    return { 유형: 유형, 구분: 구분, 원과정: 구분 === '원과정' ? '' : name.replace(/_재응시$/, '').replace(/_열람전용$/, '') };
+  }
+
   function isDone(rec) { return S(rec['수료여부']) === '수료'; }
 
   /* ---- 메인 분석 함수 ---------------------------------------------------- */
@@ -268,7 +279,8 @@
     // 과목별 현황
     var courseRows = [];
     courseAgg.forEach(function (v, k) {
-      courseRows.push({ 과정명: k, 카테고리: v.cat, 신청자: v.enroll.size, 수료자: v.done.size, 수료율: rate(v.done.size, v.enroll.size) });
+      var ct = courseType(k, v.cat);
+      courseRows.push({ 과정명: k, 카테고리: v.cat, 유형: ct.유형, 구분: ct.구분, 원과정: ct.원과정, 신청자: v.enroll.size, 수료자: v.done.size, 수료율: rate(v.done.size, v.enroll.size) });
     });
     courseRows.sort(function (a, b) { return b.신청자 - a.신청자; });
 
@@ -305,15 +317,19 @@
 
     // 중복 이수 확인: 하나의 ID가 같은 교육과정을 2회 이상 '수료'한 경우
     // (ID는 본인인증 고유값이므로 동명이인 문제 없음. 같은 과정 중복 수료만 점검)
-    var duplicateRows = []; var dupIDs = {}; var dupReq = 0, dupSel = 0;
+    var duplicateRows = []; var dupIDs = {}; var dupReq = 0, dupSel = 0, dupSameRound = 0;
     dupComp.forEach(function (g) {
       if (g.recs.length < 2) return;
       var per = personByID.get(g.ID) || {};
       dupIDs[g.ID] = 1;
       if (g.카테고리 === '직무교육(필수)') dupReq++; else if (g.카테고리 === '직무교육(선택)') dupSel++;
+      // 중복유형: 서로 다른 차수에 걸친 재수강(과락자 재수강 흐름)인지, 같은 차수 안의 중복(데이터 이상 의심)인지
+      var roundSet = {}; g.recs.forEach(function (x) { roundSet[S(x.연도차수)] = 1; });
+      var 중복유형 = Object.keys(roundSet).length >= 2 ? '재수강(다차수)' : '동일차수 중복';
+      if (중복유형 === '동일차수 중복') dupSameRound++;
       duplicateRows.push({
         ID: g.ID, 성명: per.성명 || g.성명, 시도: per.시도 || g.시도, 시군구: per.시군구 || '', 기관명: per.기관명 || g.기관명, 기관코드: per.기관코드 || '',
-        직군: per.직군 || g.직군, 과정명: g.과정명, 카테고리: g.카테고리, 수료횟수: g.recs.length,
+        직군: per.직군 || g.직군, 과정명: g.과정명, 카테고리: g.카테고리, 중복유형: 중복유형, 수료횟수: g.recs.length,
         차수: g.recs.map(function (x) { return x.연도차수; }).join(', '),
         수료일: g.recs.map(function (x) { return x.수료일; }).filter(Boolean).join(', '),
         직무교육이수: !!per.이수, 교육대상: !!per.기준정의
@@ -337,7 +353,7 @@
       지역외제외: regionExcluded,
       보류미검토: pendingRows.filter(function (p) { return p.보류상태 === 'pending'; }).length,
       보류승인: pendingRows.filter(function (p) { return p.보류상태 === 'approve'; }).length,
-      중복수료건수: duplicateRows.length, 중복수료인원: dupPersonCnt, 중복수료필수: dupReq, 중복수료선택: dupSel
+      중복수료건수: duplicateRows.length, 중복수료인원: dupPersonCnt, 중복수료필수: dupReq, 중복수료선택: dupSel, 중복동일차수: dupSameRound
     };
 
     return {
@@ -398,7 +414,7 @@
     out.push(s === p ? '' + s : s + '~' + p); return out.join(', ');
   }
 
-  var API = { analyze: analyze, coverage: coverage, DEFAULT_CONFIG: DEFAULT_CONFIG, DEFAULT_CHASI: DEFAULT_CHASI, normDirect: normDirect, selBase: selBase, pilMeta: pilMeta };
+  var API = { analyze: analyze, coverage: coverage, DEFAULT_CONFIG: DEFAULT_CONFIG, DEFAULT_CHASI: DEFAULT_CHASI, normDirect: normDirect, selBase: selBase, pilMeta: pilMeta, courseType: courseType };
   if (typeof module !== 'undefined' && module.exports) module.exports = API;
   root.LMS = API;
 })(typeof window !== 'undefined' ? window : this);

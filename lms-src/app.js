@@ -635,34 +635,38 @@
     var k = state.result.kpi;
     var card = el('div', { class: 'card' });
     var note = el('div', { class: 'note' });
-    note.innerHTML = '<b>하나의 ID</b>가 <b>같은 교육과정을 2회 이상 수료</b>한 건입니다(예: 같은 필수 과정을 서로 다른 차수에서 중복 수료). ' +
+    note.innerHTML = '<b>하나의 ID</b>가 <b>같은 교육과정을 2회 이상 수료</b>한 건입니다. ' +
       'ID는 본인인증 기반 고유값이므로 동명이인·중복계정 문제는 없으며, 여기서는 <b>같은 과정의 중복 이수</b>만 점검합니다. ' +
-      '<b>완전히 동일한 행(같은 파일 중복 업로드·원본 중복행)은 자동 제거</b>되므로, 여기 표시되는 건은 실제로 서로 다른 이수 기록입니다.';
+      '<b>재수강(다차수)</b>는 최종평가 과락자가 다른 차수에 재수강하는 정상 흐름일 수 있고, <b>동일차수 중복</b>만 데이터 이상이 의심되는 실제 점검 대상입니다. ' +
+      '(완전히 동일한 행은 업로드 시 자동 제거되므로, 여기 표시되는 건은 서로 다른 이수 기록)';
     card.appendChild(note);
     var sum = el('div', { class: 'toolbar' });
-    sum.innerHTML = '<span class="filechip">중복 수료 건수 <b>' + fmt(k.중복수료건수) + '</b></span><span class="filechip">해당 인원(ID) <b>' + fmt(k.중복수료인원) + '</b></span><span class="filechip">필수 <b>' + fmt(k.중복수료필수) + '</b></span><span class="filechip">선택 <b>' + fmt(k.중복수료선택) + '</b></span>';
+    sum.innerHTML = '<span class="filechip">중복 수료 건수 <b>' + fmt(k.중복수료건수) + '</b></span><span class="filechip">해당 인원(ID) <b>' + fmt(k.중복수료인원) + '</b></span><span class="filechip">재수강(다차수) <b>' + fmt(k.중복수료건수 - (k.중복동일차수 || 0)) + '</b></span><span class="filechip">동일차수 중복(점검 대상) <b>' + fmt(k.중복동일차수 || 0) + '</b></span>';
     card.appendChild(sum);
     if (!rows.length) { card.appendChild(el('div', { class: 'empty-state', html: '<div class="big">✅</div>같은 과정을 2회 이상 수료한 중복 건이 없습니다.' })); c.appendChild(card); return; }
     var cols = [
       { key: 'ID', label: 'ID' }, { key: '성명', label: '성명' }, { key: '시도', label: '시도' }, { key: '시군구', label: '시군구' },
       { key: '기관명', label: '수행기관명' }, { key: '기관코드', label: '기관코드' }, { key: '직군', label: '직급' },
       { key: '카테고리', label: '구분' }, { key: '과정명', label: '중복 수료 과정' },
+      { key: '중복유형', label: '중복유형', render: function (v) { return v === '동일차수 중복' ? '<span class="pill n">동일차수 중복</span>' : '<span class="pill y">재수강(다차수)</span>'; }, exp: function (v) { return v; } },
       { key: '수료횟수', label: '수료횟수', num: true, render: function (v) { return '<span class="pill g">' + v + '회</span>'; }, exp: function (v) { return v; } },
       { key: '차수', label: '수료 차수' }, { key: '수료일', label: '수료일' },
       { key: '직무교육이수', label: '직무교육 이수', render: function (v) { return yn(v); }, exp: function (v) { return v ? '이수' : '미이수'; } }
     ];
     var fb = filterBar({ searchKey: 1, searchLabel: '검색(ID·성명·기관·과정)' }, [
+      { key: '중복유형', label: '중복유형', options: uniq(rows, '중복유형') },
       { key: '카테고리', label: '구분', options: uniq(rows, '카테고리') },
       { key: '시도', label: '시도', options: uniq(rows, '시도') }
     ], apply);
     var head = el('div', { class: 'head' });
-    head.appendChild(el('div', { html: '<h2>중복자 확인 (같은 과정 중복 이수)</h2><p class="desc">하나의 ID가 동일 과정을 2회 이상 수료한 건</p>' }));
+    head.appendChild(el('div', { html: '<h2>중복자 확인 (같은 과정 중복 이수)</h2><p class="desc">하나의 ID가 동일 과정을 2회 이상 수료한 건 · 재수강(다차수)/동일차수 중복 구분</p>' }));
     var expHolder = el('div'); head.appendChild(expHolder);
     card.appendChild(head); card.appendChild(fb.node);
     var holder = el('div'); card.appendChild(holder); c.appendChild(card);
     function apply() {
       var q = (fb.sels.__search.value || '').trim().toLowerCase();
       var filtered = rows.filter(function (r) {
+        if (fb.sels['중복유형'].value && r.중복유형 !== fb.sels['중복유형'].value) return false;
         if (fb.sels['카테고리'].value && r.카테고리 !== fb.sels['카테고리'].value) return false;
         if (fb.sels['시도'].value && r.시도 !== fb.sels['시도'].value) return false;
         if (q && (String(r.ID).toLowerCase().indexOf(q) < 0 && String(r.성명).toLowerCase().indexOf(q) < 0 && String(r.기관명).toLowerCase().indexOf(q) < 0 && String(r.과정명).toLowerCase().indexOf(q) < 0)) return false;
@@ -742,21 +746,41 @@
   function renderCourses(c) {
     var rows = state.result.courseRows;
     var card = el('div', { class: 'card' });
+    var note = el('div', { class: 'note info' });
+    var retakeCnt = rows.filter(function (r) { return r.구분 === '재응시'; }).length;
+    note.innerHTML = '재응시 과정(과정명 끝 <b>_재응시</b>)은 <b>구분</b> 컬럼으로 원과정과 분리됩니다. ' +
+      '재응시 신청자의 상당수는 원과정에도 신청되어 있으므로, 과정별 인원을 합산할 때는 <b>구분=원과정</b>만 선택하면 인원 중복 없는 통계가 됩니다.' +
+      (retakeCnt ? ' (현재 재응시 과정 ' + retakeCnt + '개)' : '');
+    card.appendChild(note);
     var head = el('div', { class: 'head' });
-    head.appendChild(el('div', { html: '<h2>과목별 수강·수료 현황</h2><p class="desc">과정(과목) 단위 신청자/수료자/수료율</p>' }));
-    head.appendChild(expBtn(rows, [
-      { key: '과정명', label: '과정명' }, { key: '카테고리', label: '카테고리' }, { key: '신청자', label: '신청자' }, { key: '수료자', label: '수료자' }, { key: '수료율', label: '수료율(%)', exp: function (v) { return v.toFixed(1); } }
-    ], '과목별_현황.xlsx'));
+    head.appendChild(el('div', { html: '<h2>과목별 수강·수료 현황</h2><p class="desc">과정(과목) 단위 신청자/수료자/수료율 · 유형(필수·신규/필수·경력/선택)과 구분(원과정/재응시)으로 분류</p>' }));
+    var expHolder = el('div'); head.appendChild(expHolder);
     card.appendChild(head);
-    var fb = filterBar({}, [{ key: '카테고리', label: '카테고리', options: uniq(rows, '카테고리') }], apply);
+    var fb = filterBar({ searchKey: 1, searchLabel: '과정 검색' }, [
+      { key: '유형', label: '유형', options: uniq(rows, '유형') },
+      { key: '구분', label: '구분', options: uniq(rows, '구분') }
+    ], apply);
     card.appendChild(fb.node);
     var holder = el('div'); card.appendChild(holder); c.appendChild(card);
     var cols = [
-      { key: '과정명', label: '과정명' }, { key: '카테고리', label: '카테고리' },
+      { key: '과정명', label: '과정명' },
+      { key: '유형', label: '유형' },
+      { key: '구분', label: '구분', render: function (v) { return v === '재응시' ? '<span class="pill g">재응시</span>' : (v === '열람전용' ? '<span class="muted">열람전용</span>' : v); }, exp: function (v) { return v; } },
+      { key: '원과정', label: '원과정(재응시인 경우)' },
       { key: '신청자', label: '신청자', num: true, render: fmt }, { key: '수료자', label: '수료자', num: true, render: fmt },
-      { key: '수료율', label: '수료율', num: true, render: function (v) { return barCell(v); } }
+      { key: '수료율', label: '수료율', num: true, render: function (v) { return barCell(v); }, exp: function (v) { return v.toFixed(1); } }
     ];
-    function apply() { var f = fb.sels['카테고리'].value; var data = f ? rows.filter(function (r) { return r.카테고리 === f; }) : rows; holder.innerHTML = ''; dataTable(holder, cols, data, { pageSize: 30, sortKey: '신청자' }); }
+    function apply() {
+      var q = (fb.sels.__search.value || '').trim().toLowerCase();
+      var data = rows.filter(function (r) {
+        if (fb.sels['유형'].value && r.유형 !== fb.sels['유형'].value) return false;
+        if (fb.sels['구분'].value && r.구분 !== fb.sels['구분'].value) return false;
+        if (q && String(r.과정명).toLowerCase().indexOf(q) < 0) return false;
+        return true;
+      });
+      holder.innerHTML = ''; dataTable(holder, cols, data, { pageSize: 30, sortKey: '신청자' });
+      expHolder.innerHTML = ''; expHolder.appendChild(expBtn(data, cols, '과목별_현황.xlsx', '엑셀 다운로드(' + fmt(data.length) + ')'));
+    }
     apply();
   }
 
