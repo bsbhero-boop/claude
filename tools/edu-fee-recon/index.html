@@ -119,8 +119,6 @@ td.orgname .code{display:block;font-weight:400;font-size:11.5px;color:var(--mute
 .flag{display:inline-block;margin:1px 3px 1px 0;padding:1px 7px;border-radius:6px;font-size:11px;background:color-mix(in srgb,var(--ink) 6%,transparent);color:var(--ink2);white-space:nowrap}
 .flag.hot{background:color-mix(in srgb,var(--serious) 16%,transparent);color:var(--ink)}
 .flag.adj{background:color-mix(in srgb,var(--accent) 15%,transparent);color:var(--ink);font-weight:600}
-.noteInline{display:block;margin-top:2px;color:var(--ink2);font-size:11.5px;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.noteInline::before{content:'✎ ';color:var(--muted)}
 .diffPlus{color:var(--crit-text);font-weight:600}
 .diffMinus{color:var(--ink);font-weight:600} /* 음수 = 초과입금: '좋음'으로 오독되지 않게 잉크색 */
 tr.detailRow>td{background:color-mix(in srgb,var(--ink) 2.5%,transparent);padding:12px 16px 14px}
@@ -154,6 +152,29 @@ tr.sidorow{cursor:pointer}
 .toolhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .toolhead .grow{flex:1}
 .smallnote{font-size:12px;color:var(--muted)}
+/* ───────────────────────── 업로드 접기 ───────────────────────── */
+#uploadCard.collapsed #uploadBody{display:none}
+/* ───────────────────────── 탭 ───────────────────────── */
+.tabBar{display:flex;gap:4px;margin-top:22px;border-bottom:1px solid var(--grid);flex-wrap:wrap}
+.tabBtn{border:none;background:none;color:var(--ink2);padding:9px 14px;font-size:13.5px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabBtn:hover{color:var(--ink)}
+.tabBtn.active{color:var(--ink);border-bottom-color:var(--accent-strong)}
+.card[data-panel]{margin-top:12px}
+/* ───────────────────────── 추정근거 · 제출비고 (상시 표시) ───────────────────────── */
+.estBlock,.noteBlock{display:block;margin-top:5px;padding:4px 9px;border-radius:0 6px 6px 0;font-size:11.5px;line-height:1.5;color:var(--ink2);max-width:400px;white-space:normal;word-break:keep-all;overflow-wrap:break-word}
+.estBlock{border-left:3px solid var(--warn);background:color-mix(in srgb, var(--warn) 13%, transparent)}
+.noteBlock{border-left:3px solid var(--accent);background:color-mix(in srgb, var(--accent) 9%, transparent)}
+.estBlock b,.noteBlock b{color:var(--ink);font-weight:700}
+.legendKey{display:inline-flex;align-items:center;padding:1px 7px;border-radius:5px;font-size:11px}
+.legendKey.est{background:color-mix(in srgb, var(--warn) 18%, transparent);color:var(--ink)}
+.legendKey.note{background:color-mix(in srgb, var(--accent) 14%, transparent);color:var(--ink)}
+/* ───────────────────────── 로딩 오버레이 ───────────────────────── */
+#busyOverlay{position:fixed;inset:0;background:color-mix(in srgb, var(--page) 72%, transparent);display:none;align-items:center;justify-content:center;z-index:100}
+#busyOverlay.show{display:flex}
+.busyBox{background:var(--surface);border:1px solid var(--ring);border-radius:12px;padding:20px 26px;display:flex;align-items:center;gap:14px;box-shadow:0 8px 30px rgba(0,0,0,.18)}
+.spinner{width:20px;height:20px;border-radius:50%;border:3px solid var(--grid);border-top-color:var(--accent-strong);animation:spin .8s linear infinite;flex:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+.busyMsg{font-size:13.5px;color:var(--ink)}
 @media (max-width:720px){ .filterRow input[type=search]{width:100%} }
 </style>
 </head>
@@ -177,7 +198,7 @@ tr.sidorow{cursor:pointer}
   <ol>
     <li><strong>파일 올리기</strong> — ① 2차 교육비 <strong>납부 안내자료</strong>(전국 기준, 필수) ② 국민은행 <strong>가상계좌 입금내역</strong>(필수) ③ 광역지원기관이 제출한 <strong>납부확인서</strong>(선택, 여러 개 가능)를 한꺼번에 끌어다 놓습니다. 안내자료 파일 안에 ‘입금내역’ 시트가 함께 들어 있으면 그 파일 하나로도 동작합니다.</li>
     <li><strong>역할 확인</strong> — 시트별로 자동 분류된 역할(기준 안내자료 / 광역 제출 확인서 / 입금내역)을 확인하고 필요하면 바꿉니다.</li>
-    <li><strong>분석 실행</strong> — 기관별 판정 결과와 시도별 현황이 표시됩니다. 결과는 엑셀로 내려받을 수 있습니다.</li>
+    <li><strong>분석 실행</strong> — 업로드 영역은 한 줄로 접히고, KPI 아래 탭에서 <strong>기관별 대사 결과</strong>(기본) · 시도별 현황 · 잉여·미확인 입금 · 미연결 확인서를 확인합니다. 결과는 엑셀로 내려받을 수 있습니다.</li>
   </ol>
   <h2 style="margin-top:18px">판정 기준</h2>
   <p class="ink2" style="margin:4px 0 8px">기대 납부액 = <strong>2차 단가 × 하반기 인원(제출 확인서 기준)</strong> + <strong>1차 잔여분</strong>(1차 단가 × 상반기 인원 − 실제 1차 납입액). 확인서가 없으면 안내자료의 2차 납부금액(= 연간 총액 − 1차 납입액)을 그대로 사용합니다.</p>
@@ -203,32 +224,39 @@ tr.sidorow{cursor:pointer}
 </section>
 
 <!-- ══════════ 1. 파일 업로드 ══════════ -->
-<section class="card">
-  <h2>1. 파일 올리기</h2>
-  <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="엑셀 파일 선택">
-    <strong>엑셀 파일을 여기로 끌어다 놓거나 클릭해서 선택</strong><br>
-    <span class="smallnote">납부 안내자료(필수) · 입금내역(필수) · 광역 제출 확인서(선택) — .xlsx / .xls / .csv, 여러 파일 동시 가능</span>
+<section class="card" id="uploadCard">
+  <div class="toolhead">
+    <h2 style="margin:0">1. 파일 올리기</h2>
+    <span class="smallnote hidden" id="uploadSummary"></span>
+    <div class="grow"></div>
+    <button class="btn small hidden" id="btnToggleUpload">파일 변경</button>
   </div>
-  <input type="file" id="fileInput" multiple accept=".xlsx,.xls,.xlsm,.csv" class="hidden">
-  <div class="filelist" id="fileList"></div>
-
-  <details class="settings" style="margin-top:16px">
-    <summary>단가 · 판정 설정</summary>
-    <table class="rateTable" id="rateTable">
-      <thead><tr><th>적용 지역(시도)</th><th>전담 연간</th><th>전담 2차분</th><th>생활지원사 연간</th><th>생활지원사 2차분</th><th></th></tr></thead>
-      <tbody></tbody>
-    </table>
-    <div class="settingsRow">
-      <button class="btn small" id="btnAddRate">특례 지역 추가</button>
-      <button class="btn small" id="btnResetRate">기본값 복원</button>
-      <label>금액 허용오차 <input type="number" id="tolInput" value="0" min="0" step="1000"> 원</label>
-      <span class="smallnote">1차분 단가는 ‘연간 − 2차분’으로 자동 계산됩니다.</span>
+  <div id="uploadBody">
+    <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="엑셀 파일 선택">
+      <strong>엑셀 파일을 여기로 끌어다 놓거나 클릭해서 선택</strong><br>
+      <span class="smallnote">납부 안내자료(필수) · 입금내역(필수) · 광역 제출 확인서(선택) — .xlsx / .xls / .csv, 여러 파일 동시 가능</span>
     </div>
-  </details>
+    <input type="file" id="fileInput" multiple accept=".xlsx,.xls,.xlsm,.csv" class="hidden">
+    <div class="filelist" id="fileList"></div>
 
-  <div style="margin-top:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-    <button class="btn primary" id="btnRun" disabled>분석 실행</button>
-    <span class="smallnote" id="runHint">기준 안내자료 1개와 입금내역 1개 이상이 필요합니다.</span>
+    <details class="settings" style="margin-top:16px">
+      <summary>단가 · 판정 설정</summary>
+      <table class="rateTable" id="rateTable">
+        <thead><tr><th>적용 지역(시도)</th><th>전담 연간</th><th>전담 2차분</th><th>생활지원사 연간</th><th>생활지원사 2차분</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="settingsRow">
+        <button class="btn small" id="btnAddRate">특례 지역 추가</button>
+        <button class="btn small" id="btnResetRate">기본값 복원</button>
+        <label>금액 허용오차 <input type="number" id="tolInput" value="0" min="0" step="1000"> 원</label>
+        <span class="smallnote">1차분 단가는 ‘연간 − 2차분’으로 자동 계산됩니다.</span>
+      </div>
+    </details>
+
+    <div style="margin-top:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <button class="btn primary" id="btnRun" disabled>분석 실행</button>
+      <span class="smallnote" id="runHint">기준 안내자료 1개와 입금내역 1개 이상이 필요합니다.</span>
+    </div>
   </div>
 </section>
 
@@ -246,34 +274,38 @@ tr.sidorow{cursor:pointer}
 
   <div class="kpis" id="kpiRow"></div>
 
-  <div class="card">
+  <div class="tabBar" id="tabBar" role="tablist">
+    <button class="tabBtn active" data-tab="detail" role="tab">기관별 대사 결과</button>
+    <button class="tabBtn" data-tab="sido" role="tab">시도별 현황</button>
+    <button class="tabBtn hidden" data-tab="surplus" role="tab" id="tabBtnSurplus">잉여·미확인 입금</button>
+    <button class="tabBtn hidden" data-tab="unmatched" role="tab" id="tabBtnUnmatched">미연결 확인서</button>
+  </div>
+
+  <div class="card" id="panelDetail" data-panel="detail">
     <div class="toolhead">
-      <h2 style="margin:0">시도별 현황</h2>
+      <span class="smallnote" id="detailCount"></span>
       <div class="grow"></div>
-      <span class="smallnote">행을 누르면 해당 시도로 필터링됩니다 · 금액 단위: 원</span>
+      <span class="smallnote">열 머리글 클릭 시 정렬 · ▸ 클릭 시 입금 건·산식 상세 · <span class="legendKey est">추정 근거</span> <span class="legendKey note">제출 비고</span></span>
+    </div>
+    <div class="tableWrap"><table class="data" id="detailTable"></table></div>
+  </div>
+
+  <div class="card hidden" id="panelSido" data-panel="sido">
+    <div class="toolhead">
+      <span class="smallnote">행을 누르면 해당 시도로 필터링되어 기관별 결과로 이동합니다 · 금액 단위: 원</span>
     </div>
     <div class="legendRow" id="sidoLegend"></div>
     <div class="tableWrap"><table class="data" id="sidoTable"></table></div>
   </div>
 
-  <div class="card">
-    <div class="toolhead">
-      <h2 style="margin:0">기관별 대사 결과</h2>
-      <span class="smallnote" id="detailCount"></span>
-      <div class="grow"></div>
-      <span class="smallnote">열 머리글 클릭 시 정렬 · ▸ 클릭 시 입금 건·산식 상세 · 금액 단위: 원</span>
-    </div>
-    <div class="tableWrap"><table class="data" id="detailTable"></table></div>
-  </div>
-
-  <div class="card hidden" id="surplusCard">
-    <h2>잉여 · 미확인 입금 <span class="smallnote" id="surplusCount"></span></h2>
+  <div class="card hidden" id="surplusCard" data-panel="surplus">
+    <div class="toolhead"><span class="smallnote" id="surplusCount"></span></div>
     <p class="smallnote" style="margin:0 0 6px">기대액을 채우고 남은 입금 건과 기준 자료에 없는 계좌로 들어온 입금입니다. 금액이 일치하는 미납 기관을 후보로 제시합니다.</p>
     <div class="tableWrap"><table class="data" id="surplusTable"></table></div>
   </div>
 
-  <div class="card hidden" id="unmatchedSubCard">
-    <h2>기준 자료와 연결되지 않은 제출 확인서 행</h2>
+  <div class="card hidden" id="unmatchedSubCard" data-panel="unmatched">
+    <div class="toolhead"><span class="smallnote">기준 자료와 연결되지 않은 제출 확인서 행</span></div>
     <div class="tableWrap"><table class="data" id="unmatchedSubTable"></table></div>
   </div>
 
@@ -284,11 +316,12 @@ tr.sidorow{cursor:pointer}
 
 <div id="tooltip" role="tooltip"></div>
 <div id="toasts"></div>
+<div id="busyOverlay"><div class="busyBox"><div class="spinner"></div><div class="busyMsg"></div></div></div>
 
 <script>
 "use strict";
 /* 버전 규칙: 작은 수정 +0.5, 큰 수정 +1.0 — 변경 내역은 README '버전 기록' 참고 */
-const APP_VERSION = '1.5';
+const APP_VERSION = '2.0';
 const APP_DATE = '2026-07';
 /* ════════════════════════════ 공용 유틸 ════════════════════════════ */
 const $ = s => document.querySelector(s);
@@ -340,6 +373,11 @@ function toast(msg){
   $('#toasts').appendChild(t);
   setTimeout(()=>t.remove(), 6000);
 }
+/* 로딩 표시 — 무거운 동기 작업(엑셀 파싱·대사 계산) 전에 반드시 먼저 화면에 그려서
+   '멈춘 것처럼' 보이지 않게 한다. requestAnimationFrame 2회로 실제 페인트를 기다린다. */
+function showBusy(msg){ $('#busyOverlay .busyMsg').textContent = msg; $('#busyOverlay').classList.add('show'); }
+function hideBusy(){ $('#busyOverlay').classList.remove('show'); }
+function nextPaint(){ return new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))); }
 /* 툴팁 */
 const tip = $('#tooltip');
 function bindTip(node, htmlBuilder){
@@ -397,7 +435,7 @@ $('#btnResetRate').addEventListener('click',()=>{ rates = JSON.parse(JSON.string
 renderRateTable();
 
 /* ════════════════════════════ 파일 파싱 ════════════════════════════ */
-const state = { sheets: [], result: null, filters:{sido:'',statuses:new Set(),q:'',adjOnly:false}, sort:{key:'sev',dir:1} };
+const state = { sheets: [], result: null, filters:{sido:'',statuses:new Set(),q:'',adjOnly:false}, sort:{key:'sev',dir:1}, activeTab:'detail' };
 
 const dz = $('#dropzone'), fi = $('#fileInput');
 dz.addEventListener('click', ()=> fi.click());
@@ -408,10 +446,17 @@ dz.addEventListener('drop', e=> handleFiles(Array.from(e.dataTransfer.files)));
 fi.addEventListener('change', ()=>{ const files = Array.from(fi.files); fi.value=''; handleFiles(files); });
 
 async function handleFiles(files){
+  if (!files.length) return;
+  showBusy(`파일을 불러오는 중… (0/${files.length})`);
+  await nextPaint();
+  let i = 0;
   for (const f of files){
+    i++;
+    showBusy(`파일을 불러오는 중… (${i}/${files.length}) ${f.name}`);
+    await nextPaint();   // 파일마다 화면을 갱신할 기회를 줘서 여러 개를 올려도 멈춘 것처럼 보이지 않게 함
     try{
       const buf = await f.arrayBuffer();
-      const wb = XLSX.read(buf, {type:'array', cellDates:false});
+      const wb = XLSX.read(buf, {type:'array', cellDates:false, dense:true});
       let found = 0;
       for (const name of wb.SheetNames){
         const ws = wb.Sheets[name];
@@ -428,6 +473,7 @@ async function handleFiles(files){
   }
   autoAssignRoles();
   renderFileList();
+  hideBusy();
 }
 
 function sheetRows(ws){
@@ -575,8 +621,21 @@ function renderFileList(){
       el('button',{class:'btn small',text:'제거',onclick:()=>{ state.sheets = state.sheets.filter(x=>x!==s); renderFileList(); }})
     ));
   });
+  $('#btnToggleUpload').classList.toggle('hidden', state.sheets.length===0);
   updateRunButton();
 }
+/* ── 업로드 영역 접기/펼치기 ── */
+function setUploadCollapsed(collapsed){
+  $('#uploadCard').classList.toggle('collapsed', collapsed);
+  $('#btnToggleUpload').textContent = collapsed ? '파일 변경' : '접기';
+  $('#uploadSummary').classList.toggle('hidden', !collapsed);
+  if (collapsed){
+    const fileN = new Set(state.sheets.map(s=>s.file)).size;
+    const orgN = state.result ? state.result.orgs.length : 0;
+    $('#uploadSummary').textContent = `파일 ${fileN}개 · 시트 ${state.sheets.length}개${state.result ? ` · 기관 ${fmt(orgN)}곳 분석 완료` : ''}`;
+  }
+}
+$('#btnToggleUpload').addEventListener('click', ()=> setUploadCollapsed(!$('#uploadCard').classList.contains('collapsed')));
 function updateRunButton(){
   const hasBase = state.sheets.some(s=>s.role==='base');
   const hasDep = state.sheets.some(s=>s.role==='dep');
@@ -756,9 +815,17 @@ function runAnalysis(){
   state.sort = {key:'sev', dir:1};
   renderResults();
   $('#results').classList.remove('hidden');
+  setUploadCollapsed(true);
   $('#results').scrollIntoView({behavior:'smooth', block:'start'});
 }
-$('#btnRun').addEventListener('click', runAnalysis);
+$('#btnRun').addEventListener('click', onRunClick);
+async function onRunClick(){
+  $('#btnRun').disabled = true;
+  showBusy('분석 중입니다…');
+  await nextPaint();     // 스피너가 실제로 그려진 뒤에 무거운 동기 계산을 시작
+  try{ runAnalysis(); }
+  finally{ hideBusy(); updateRunButton(); }
+}
 
 /* ════════════════════════════ 렌더링 ════════════════════════════ */
 function statusChip(st){
@@ -785,43 +852,71 @@ function filteredOrgs(){
 }
 
 function renderResults(){
+  // 시도별 현황·잉여입금·미연결확인서는 필터와 무관하게 항상 전체 기준이므로 실행당 한 번만 그린다.
   renderFilters();
-  renderKPIs();
   renderSidoTable();
-  renderDetailTable();
   renderSurplus();
   renderUnmatchedSubs();
+  updateTabVisibility();
+  renderDynamic();
 }
+function renderDynamic(){
+  // 필터·정렬이 바뀔 때마다 이 두 개만 다시 그린다(시도별 표 등은 그대로 둬서 클릭할 때마다 버벅이지 않게 함).
+  renderKPIs();
+  renderDetailTable();
+}
+function switchTab(name){
+  state.activeTab = name;
+  document.querySelectorAll('.tabBtn').forEach(b=> b.classList.toggle('active', b.dataset.tab===name));
+  document.querySelectorAll('[data-panel]').forEach(p=> p.classList.toggle('hidden', p.dataset.panel!==name));
+}
+function updateTabVisibility(){
+  const hasSurplus = state.result.surplusRows.length>0;
+  const hasUnmatched = state.result.unmatchedSubs.length>0;
+  const bS = $('#tabBtnSurplus'), bU = $('#tabBtnUnmatched');
+  bS.classList.toggle('hidden', !hasSurplus);
+  bS.textContent = `잉여·미확인 입금 (${state.result.surplusRows.length})`;
+  bU.classList.toggle('hidden', !hasUnmatched);
+  bU.textContent = `미연결 확인서 (${state.result.unmatchedSubs.length})`;
+  const activeBtn = document.querySelector(`.tabBtn[data-tab="${state.activeTab}"]`);
+  const activeHidden = !activeBtn || activeBtn.classList.contains('hidden');
+  switchTab(activeHidden ? 'detail' : state.activeTab);
+}
+document.querySelectorAll('.tabBtn').forEach(b=> b.addEventListener('click', ()=> switchTab(b.dataset.tab)));
 
 function renderFilters(){
   const sel = $('#sidoFilter');
   const cur = state.filters.sido;
   sel.replaceChildren(el('option',{value:'',text:'전체 시도'}));
   [...new Set(state.result.orgs.map(o=>o.b.sido))].forEach(s=> sel.appendChild(el('option',{value:s,text:s,...(s===cur?{selected:''}:{})})));
-  sel.onchange = ()=>{ state.filters.sido = sel.value; renderKPIs(); renderDetailTable(); };
+  sel.onchange = ()=>{ state.filters.sido = sel.value; renderDynamic(); };
   const counts = {};
   for (const o of state.result.orgs) counts[o.status]=(counts[o.status]||0)+1;
   const chips = $('#statusChips'); chips.replaceChildren();
   for (const [k,s] of Object.entries(STATUS)){
     if (!counts[k]) continue;
-    const c = el('button',{class:'chip'+(state.filters.statuses.has(k)?' on':''), onclick:()=>{
-      state.filters.statuses.has(k) ? state.filters.statuses.delete(k) : state.filters.statuses.add(k);
-      renderResults();
-    }}, el('span',{class:'dot'}), `${s.label} `, el('span',{class:'cnt',text:counts[k]}));
+    const c = el('button',{class:'chip'+(state.filters.statuses.has(k)?' on':'')},
+      el('span',{class:'dot'}), `${s.label} `, el('span',{class:'cnt',text:counts[k]}));
     c.querySelector('.dot').style.background = s.color;
+    // 클릭할 때마다 시도별 표까지 통째로 다시 그리면 버벅이므로, 이 칩과 상세 표만 갱신한다.
+    c.addEventListener('click', ()=>{
+      state.filters.statuses.has(k) ? state.filters.statuses.delete(k) : state.filters.statuses.add(k);
+      c.classList.toggle('on');
+      renderDynamic();
+    });
     chips.appendChild(c);
   }
   const adjCount = state.result.orgs.filter(o=>o.adjusted).length;
   if (adjCount){
-    const c = el('button',{class:'chip'+(state.filters.adjOnly?' on':''), title:'확인서에서 종사자 수가 조정된 기관만 표시',
-      onclick:()=>{ state.filters.adjOnly = !state.filters.adjOnly; renderResults(); }},
+    const c = el('button',{class:'chip'+(state.filters.adjOnly?' on':''), title:'확인서에서 종사자 수가 조정된 기관만 표시'},
       el('span',{class:'dot'}), '인원조정 ', el('span',{class:'cnt',text:adjCount}));
     c.querySelector('.dot').style.background = 'var(--accent)';
+    c.addEventListener('click', ()=>{ state.filters.adjOnly = !state.filters.adjOnly; c.classList.toggle('on'); renderDynamic(); });
     chips.appendChild(c);
   }
-  $('#searchBox').oninput = e=>{ state.filters.q = e.target.value; renderDetailTable(); };
+  $('#searchBox').oninput = e=>{ state.filters.q = e.target.value; renderDynamic(); };
   $('#searchBox').value = state.filters.q;
-  $('#btnClearFilter').onclick = ()=>{ state.filters={sido:'',statuses:new Set(),q:'',adjOnly:false}; renderResults(); };
+  $('#btnClearFilter').onclick = ()=>{ state.filters={sido:'',statuses:new Set(),q:'',adjOnly:false}; renderFilters(); renderDynamic(); };
   $('#btnExport').onclick = exportXlsx;
 }
 
@@ -910,7 +1005,12 @@ function renderSidoTable(){
       el('td',{class:'num'}, diffSpan(b.exp-b.paid)),
       el('td',null,bar),
     );
-    if (!isTotal) tr.addEventListener('click',()=>{ state.filters.sido = state.filters.sido===sido?'':sido; $('#sidoFilter').value=state.filters.sido; renderKPIs(); renderDetailTable(); });
+    if (!isTotal) tr.addEventListener('click',()=>{
+      state.filters.sido = state.filters.sido===sido?'':sido;
+      $('#sidoFilter').value = state.filters.sido;
+      renderDynamic();
+      switchTab('detail');
+    });
     return tr;
   }
 }
@@ -977,21 +1077,13 @@ function orgRow(o){
     if (f.tip) bindTip(sp, ()=>{ const b=el('div'); f.tip.split('\n').forEach(l=>b.appendChild(el('div',{text:l}))); return b; });
     fl.appendChild(sp);
   }
+  // 추정 근거·광역 제출 비고는 마우스 오버 없이 항상 보이도록 표시하되, 색으로 성격을 구분한다
+  // (노랑=우리가 계산한 추정, 파랑=광역이 직접 적어 제출한 내용).
   if (o.explain && (o.status==='est'||o.status==='mism')){
-    const sp = el('span',{class:'flag',text:'추정 근거'});
-    bindTip(sp, ()=>el('div',{text:o.explain.text}));
-    fl.appendChild(sp);
+    fl.appendChild(el('div',{class:'estBlock'}, el('b',{text:'추정 근거  '}), o.explain.text));
   }
-  {  // 광역 특이사항·안내 비고를 표에서 바로 보여준다 (전체 내용은 툴팁·상세)
-    const noteParts = [];
-    if (o.sub && o.sub.note) noteParts.push(['확인서', o.sub.note]);
-    if (o.b.note) noteParts.push(['안내자료', o.b.note]);
-    if (noteParts.length){
-      const inline = el('span',{class:'noteInline', text: noteParts.map(p=>p[1]).join(' / ')});
-      bindTip(inline, ()=>{ const b=el('div'); noteParts.forEach(([k,v])=>b.appendChild(el('div',{text:`[${k}] ${v}`}))); return b; });
-      fl.appendChild(inline);
-    }
-  }
+  if (o.sub && o.sub.note) fl.appendChild(el('div',{class:'noteBlock'}, el('b',{text:'확인서 비고  '}), o.sub.note));
+  if (o.b.note) fl.appendChild(el('div',{class:'noteBlock'}, el('b',{text:'안내자료 비고  '}), o.b.note));
   tr.appendChild(fl);
   let detail = null;
   btn.addEventListener('click',()=>{
@@ -1044,12 +1136,11 @@ function detailRow(o){
 }
 
 function renderSurplus(){
+  // 카드 표시 여부는 탭(updateTabVisibility)이 결정 — 여기서는 내용만 채운다.
   const rows = state.result.surplusRows;
-  const card = $('#surplusCard');
-  if (!rows.length){ card.classList.add('hidden'); return; }
-  card.classList.remove('hidden');
-  $('#surplusCount').textContent = `${rows.length}건 · 합계 ${fmt(rows.reduce((s,r)=>s+r.d.amt,0))}원`;
+  $('#surplusCount').textContent = rows.length ? `${rows.length}건 · 합계 ${fmt(rows.reduce((s,r)=>s+r.d.amt,0))}원` : '';
   const t = $('#surplusTable'); t.replaceChildren();
+  if (!rows.length) return;
   t.appendChild(el('thead',null,el('tr',null,...['입금일시','입금 계좌의 배정 기관','입금의뢰인','등록번호','금액','오입금 추정 후보 (미수납액 일치)'].map((h,i)=>el('th',{class:i===4?'r':'',text:h})))));
   const tb = el('tbody');
   for (const r of rows){
@@ -1072,11 +1163,10 @@ function renderSurplus(){
 }
 
 function renderUnmatchedSubs(){
+  // 카드 표시 여부는 탭(updateTabVisibility)이 결정 — 여기서는 내용만 채운다.
   const rows = state.result.unmatchedSubs;
-  const card = $('#unmatchedSubCard');
-  if (!rows.length){ card.classList.add('hidden'); return; }
-  card.classList.remove('hidden');
   const t = $('#unmatchedSubTable'); t.replaceChildren();
+  if (!rows.length) return;
   t.appendChild(el('thead',null,el('tr',null,...['기관코드','시도','기관명','제출 납부금액','비고'].map(h=>el('th',{text:h})))));
   const tb = el('tbody');
   for (const s of rows) tb.appendChild(el('tr',null,
