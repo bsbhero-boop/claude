@@ -118,6 +118,9 @@ td.orgname .code{display:block;font-weight:400;font-size:11.5px;color:var(--mute
 .statusChip .ic{font-size:11px}
 .flag{display:inline-block;margin:1px 3px 1px 0;padding:1px 7px;border-radius:6px;font-size:11px;background:color-mix(in srgb,var(--ink) 6%,transparent);color:var(--ink2);white-space:nowrap}
 .flag.hot{background:color-mix(in srgb,var(--serious) 16%,transparent);color:var(--ink)}
+.flag.adj{background:color-mix(in srgb,var(--accent) 15%,transparent);color:var(--ink);font-weight:600}
+.noteInline{display:block;margin-top:2px;color:var(--ink2);font-size:11.5px;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.noteInline::before{content:'✎ ';color:var(--muted)}
 .diffPlus{color:var(--crit-text);font-weight:600}
 .diffMinus{color:var(--ink);font-weight:600} /* 음수 = 초과입금: '좋음'으로 오독되지 않게 잉크색 */
 tr.detailRow>td{background:color-mix(in srgb,var(--ink) 2.5%,transparent);padding:12px 16px 14px}
@@ -276,7 +279,7 @@ tr.sidorow{cursor:pointer}
 
 </section>
 
-<p class="privacy">이 도구는 서버로 어떤 데이터도 전송하지 않습니다. 파일은 브라우저 메모리에서만 처리되며, 창을 닫으면 사라집니다. · v1.0 (2026-07)</p>
+<p class="privacy">이 도구는 서버로 어떤 데이터도 전송하지 않습니다. 파일은 브라우저 메모리에서만 처리되며, 창을 닫으면 사라집니다. · <span id="verLabel"></span></p>
 </main>
 
 <div id="tooltip" role="tooltip"></div>
@@ -284,6 +287,9 @@ tr.sidorow{cursor:pointer}
 
 <script>
 "use strict";
+/* 버전 규칙: 작은 수정 +0.5, 큰 수정 +1.0 — 변경 내역은 README '버전 기록' 참고 */
+const APP_VERSION = '1.5';
+const APP_DATE = '2026-07';
 /* ════════════════════════════ 공용 유틸 ════════════════════════════ */
 const $ = s => document.querySelector(s);
 const el = (tag, attrs, ...kids) => {
@@ -356,6 +362,7 @@ function moveTip(e){
   apply();
 })();
 $('#btnHelp').addEventListener('click',()=> $('#helpCard').classList.toggle('hidden'));
+$('#verLabel').textContent = `v${APP_VERSION} (${APP_DATE})`;
 
 /* ════════════════════════════ 단가 설정 ════════════════════════════ */
 const RATE_KEY='eduFeeRates2026v1';
@@ -390,7 +397,7 @@ $('#btnResetRate').addEventListener('click',()=>{ rates = JSON.parse(JSON.string
 renderRateTable();
 
 /* ════════════════════════════ 파일 파싱 ════════════════════════════ */
-const state = { sheets: [], result: null, filters:{sido:'',statuses:new Set(),q:''}, sort:{key:'sev',dir:1} };
+const state = { sheets: [], result: null, filters:{sido:'',statuses:new Set(),q:'',adjOnly:false}, sort:{key:'sev',dir:1} };
 
 const dz = $('#dropzone'), fi = $('#fileInput');
 dz.addEventListener('click', ()=> fi.click());
@@ -700,7 +707,10 @@ function runAnalysis(){
         else status = 'mism';
       }
     }
-    if (adjusted) flags.push({t:`인원조정 ${b.w0}+${b.l0}→${F1}+${G1}`, tip:`확인서 기준 전담 ${b.w0}→${F1}, 생활지원사 ${b.l0}→${G1}`});
+    if (adjusted){
+      flags.unshift({t:`인원조정 ${b.w0}+${b.l0}→${F1}+${G1}`, cls:'adj', tip:`확인서 기준 전담 ${b.w0}→${F1}, 생활지원사 ${b.l0}→${G1}`});
+      if (!sub.note) flags.push({t:'조정사유 미기재', hot:true, tip:'인원이 조정되었는데 확인서 특이사항(비고)에 사유가 없습니다 — 광역에 확인 필요'});
+    }
     if (sub && sub.paidQ != null && Math.abs(sub.paidQ - paid) > tol)
       flags.push({t:'제출액≠입금액', hot:true, tip:`확인서 납부금액 ${fmt(sub.paidQ)}원 ≠ 실입금 ${fmt(paid)}원`});
     if (sub && sub.paidD && dlist.length){
@@ -742,7 +752,7 @@ function runAnalysis(){
   state.result = { orgs, deps, surplusRows, unmatchedSubs, dupSkipped, tol,
     baseInfo:`${baseSheet.file} · ${baseSheet.sheet}`, subCount: subSheets.length };
   if (dupSkipped) toast(`중복된 입금 행 ${dupSkipped}건을 제외했습니다(여러 파일에 같은 내역).`);
-  state.filters = {sido:'', statuses:new Set(), q:''};
+  state.filters = {sido:'', statuses:new Set(), q:'', adjOnly:false};
   state.sort = {key:'sev', dir:1};
   renderResults();
   $('#results').classList.remove('hidden');
@@ -764,6 +774,7 @@ function filteredOrgs(){
   const qq = norm(q).toLowerCase();
   return state.result.orgs.filter(o=>{
     if (sido && o.b.sido !== sido) return false;
+    if (state.filters.adjOnly && !o.adjusted) return false;
     if (statuses.size && !statuses.has(o.status)) return false;
     if (qq){
       const hay = (o.b.name+' '+o.b.code+' '+o.b.sgg+' '+o.b.acctRaw).toLowerCase();
@@ -800,9 +811,17 @@ function renderFilters(){
     c.querySelector('.dot').style.background = s.color;
     chips.appendChild(c);
   }
+  const adjCount = state.result.orgs.filter(o=>o.adjusted).length;
+  if (adjCount){
+    const c = el('button',{class:'chip'+(state.filters.adjOnly?' on':''), title:'확인서에서 종사자 수가 조정된 기관만 표시',
+      onclick:()=>{ state.filters.adjOnly = !state.filters.adjOnly; renderResults(); }},
+      el('span',{class:'dot'}), '인원조정 ', el('span',{class:'cnt',text:adjCount}));
+    c.querySelector('.dot').style.background = 'var(--accent)';
+    chips.appendChild(c);
+  }
   $('#searchBox').oninput = e=>{ state.filters.q = e.target.value; renderDetailTable(); };
   $('#searchBox').value = state.filters.q;
-  $('#btnClearFilter').onclick = ()=>{ state.filters={sido:'',statuses:new Set(),q:''}; renderResults(); };
+  $('#btnClearFilter').onclick = ()=>{ state.filters={sido:'',statuses:new Set(),q:'',adjOnly:false}; renderResults(); };
   $('#btnExport').onclick = exportXlsx;
 }
 
@@ -954,7 +973,7 @@ function orgRow(o){
   tr.appendChild(el('td',{class:'num'},diffSpan(o.diff)));
   const fl = el('td');
   for (const f of o.flags){
-    const sp = el('span',{class:'flag'+(f.hot?' hot':''),text:f.t});
+    const sp = el('span',{class:'flag'+(f.hot?' hot':'')+(f.cls?' '+f.cls:''),text:f.t});
     if (f.tip) bindTip(sp, ()=>{ const b=el('div'); f.tip.split('\n').forEach(l=>b.appendChild(el('div',{text:l}))); return b; });
     fl.appendChild(sp);
   }
@@ -962,6 +981,16 @@ function orgRow(o){
     const sp = el('span',{class:'flag',text:'추정 근거'});
     bindTip(sp, ()=>el('div',{text:o.explain.text}));
     fl.appendChild(sp);
+  }
+  {  // 광역 특이사항·안내 비고를 표에서 바로 보여준다 (전체 내용은 툴팁·상세)
+    const noteParts = [];
+    if (o.sub && o.sub.note) noteParts.push(['확인서', o.sub.note]);
+    if (o.b.note) noteParts.push(['안내자료', o.b.note]);
+    if (noteParts.length){
+      const inline = el('span',{class:'noteInline', text: noteParts.map(p=>p[1]).join(' / ')});
+      bindTip(inline, ()=>{ const b=el('div'); noteParts.forEach(([k,v])=>b.appendChild(el('div',{text:`[${k}] ${v}`}))); return b; });
+      fl.appendChild(inline);
+    }
   }
   tr.appendChild(fl);
   let detail = null;
@@ -1098,6 +1127,7 @@ function exportXlsx(){
 
 /* 테스트 훅 (자동화 검증용) */
 window.__APP = {
+  version: APP_VERSION,
   state,
   summary(){
     if (!state.result) return null;
