@@ -1,0 +1,1115 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>2026 노인맞춤돌봄 2차 교육비 · 입금 대사 도구</title>
+<!-- BUILD:XLSX_LIB --><script src="./xlsx.full.min.js"></script><!-- /BUILD:XLSX_LIB -->
+<style>
+/* ───────────────────────── 팔레트/토큰 (light 기본) ───────────────────────── */
+:root{
+  color-scheme: light;
+  --surface:#fcfcfb; --page:#f9f9f7;
+  --ink:#0b0b0b; --ink2:#52514e; --muted:#898781;
+  --grid:#e1e0d9; --axis:#c3c2b7; --ring:rgba(11,11,11,.10);
+  --accent:#2a78d6; --accent-strong:#256abf; --meter-track:#cde2fb;
+  --good:#0ca30c; --warn:#fab219; --serious:#ec835a; --crit:#d03b3b;
+  --good-text:#006300; --crit-text:#b32e2e;
+  --chip-alpha:.13;
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --surface:#1a1a19; --page:#0d0d0d;
+  --ink:#ffffff; --ink2:#c3c2b7; --muted:#898781;
+  --grid:#2c2c2a; --axis:#383835; --ring:rgba(255,255,255,.10);
+  --accent:#3987e5; --accent-strong:#3987e5; --meter-track:#0d366b;
+  --good-text:#0ca30c; --crit-text:#e66767;
+  --chip-alpha:.22;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]):not([data-theme="dark"]){
+    color-scheme: dark;
+    --surface:#1a1a19; --page:#0d0d0d;
+    --ink:#ffffff; --ink2:#c3c2b7; --muted:#898781;
+    --grid:#2c2c2a; --axis:#383835; --ring:rgba(255,255,255,.10);
+    --accent:#3987e5; --accent-strong:#3987e5; --meter-track:#0d366b;
+    --good-text:#0ca30c; --crit-text:#e66767;
+    --chip-alpha:.22;
+  }
+}
+/* ───────────────────────── 기본 레이아웃 ───────────────────────── */
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--page);color:var(--ink);
+  font-family:system-ui,-apple-system,"Segoe UI","Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif;
+  font-size:14px;line-height:1.55;}
+main{max-width:1420px;margin:0 auto;padding:0 20px 60px}
+h1{font-size:20px;margin:0;font-weight:700;letter-spacing:-.2px}
+h2{font-size:15px;margin:0 0 12px;font-weight:700}
+a{color:var(--accent)}
+.topbar{display:flex;align-items:center;gap:12px;max-width:1420px;margin:0 auto;padding:18px 20px 10px}
+.topbar .sub{color:var(--ink2);font-size:12.5px;margin-top:2px}
+.topbar .grow{flex:1}
+button{font:inherit}
+.btn{border:1px solid var(--ring);background:var(--surface);color:var(--ink);
+  border-radius:8px;padding:7px 14px;cursor:pointer;font-size:13px}
+.btn:hover{border-color:var(--axis)}
+.btn.primary{background:var(--accent-strong);border-color:transparent;color:#fff;font-weight:600}
+.btn.primary:disabled{opacity:.45;cursor:not-allowed}
+.btn.small{padding:4px 10px;font-size:12px;border-radius:6px}
+.card{background:var(--surface);border:1px solid var(--ring);border-radius:12px;padding:18px 20px;margin-top:16px}
+.hidden{display:none!important}
+.muted{color:var(--muted)}
+.ink2{color:var(--ink2)}
+.num{font-variant-numeric:tabular-nums;text-align:right}
+.nowrap{white-space:nowrap}
+/* ───────────────────────── 업로드 ───────────────────────── */
+.dropzone{border:1.5px dashed var(--axis);border-radius:10px;padding:26px;text-align:center;color:var(--ink2);cursor:pointer;transition:border-color .15s, background .15s}
+.dropzone.drag{border-color:var(--accent);background:color-mix(in srgb, var(--accent) 6%, var(--surface))}
+.dropzone strong{color:var(--ink)}
+.filelist{margin-top:14px;display:flex;flex-direction:column;gap:8px}
+.filerow{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--ring);border-radius:8px;font-size:13px}
+.filerow .fname{font-weight:600;max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.filerow select{font:inherit;font-size:12.5px;padding:3px 6px;border-radius:6px;border:1px solid var(--axis);background:var(--surface);color:var(--ink)}
+.badge{display:inline-block;padding:1px 8px;border-radius:99px;font-size:11.5px;border:1px solid var(--ring);color:var(--ink2)}
+.roleTag{font-size:11.5px;padding:2px 8px;border-radius:99px;background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--ink)}
+/* ───────────────────────── 설정 ───────────────────────── */
+details.settings summary{cursor:pointer;font-weight:600;font-size:13.5px;color:var(--ink2)}
+.rateTable{border-collapse:collapse;margin-top:10px;font-size:13px}
+.rateTable th,.rateTable td{border-bottom:1px solid var(--grid);padding:6px 10px;text-align:right}
+.rateTable th{color:var(--muted);font-weight:600;font-size:12px}
+.rateTable th:first-child,.rateTable td:first-child{text-align:left}
+.rateTable input[type=number],.rateTable input[type=text]{width:96px;font:inherit;font-size:13px;padding:3px 6px;border:1px solid var(--axis);border-radius:6px;background:var(--surface);color:var(--ink);text-align:right}
+.rateTable input[type=text]{text-align:left;width:120px}
+.settingsRow{display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin-top:12px;font-size:13px}
+.settingsRow input[type=number]{width:80px;font:inherit;padding:3px 6px;border:1px solid var(--axis);border-radius:6px;background:var(--surface);color:var(--ink);text-align:right}
+/* ───────────────────────── 필터/칩 ───────────────────────── */
+.filterRow{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:20px}
+.filterRow select,.filterRow input[type=search]{font:inherit;font-size:13px;padding:7px 10px;border:1px solid var(--ring);border-radius:8px;background:var(--surface);color:var(--ink)}
+.filterRow input[type=search]{width:240px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:99px;border:1px solid var(--ring);background:var(--surface);cursor:pointer;font-size:12.5px;color:var(--ink2);user-select:none}
+.chip .dot{width:8px;height:8px;border-radius:50%;flex:none}
+.chip.on{border-color:var(--ink2);color:var(--ink);font-weight:600}
+.chip .cnt{font-variant-numeric:tabular-nums}
+/* ───────────────────────── KPI ───────────────────────── */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:12px;margin-top:14px}
+.kpi{background:var(--surface);border:1px solid var(--ring);border-radius:12px;padding:14px 16px}
+.kpi .label{font-size:12.5px;color:var(--ink2)}
+.kpi .value{font-size:26px;font-weight:650;margin-top:2px;letter-spacing:-.3px;white-space:nowrap}
+.kpi .value .unit{font-size:13px;font-weight:500;color:var(--ink2);margin-left:2px}
+.kpi .sub{font-size:12px;color:var(--muted);margin-top:2px}
+.kpi.alert .value{color:var(--crit-text)}
+.kpi.goodv .value{color:var(--good-text)}
+/* ───────────────────────── 테이블 공통 ───────────────────────── */
+.tableWrap{overflow-x:auto;margin-top:8px}
+table.data{border-collapse:collapse;width:100%;font-size:13px}
+table.data th{position:sticky;top:0;background:var(--surface);z-index:2;
+  color:var(--muted);font-weight:600;font-size:12px;text-align:left;padding:8px 10px;border-bottom:1px solid var(--axis);white-space:nowrap}
+table.data th.sortable{cursor:pointer}
+table.data th.sortable:hover{color:var(--ink)}
+table.data th .arr{font-size:10px}
+table.data td{padding:7px 10px;border-bottom:1px solid var(--grid);vertical-align:top}
+table.data tbody tr:hover{background:color-mix(in srgb,var(--ink) 3%,transparent)}
+table.data td.r,table.data th.r{text-align:right}
+td.orgname{font-weight:600}
+td.orgname .code{display:block;font-weight:400;font-size:11.5px;color:var(--muted)}
+.statusChip{display:inline-flex;align-items:center;gap:5px;padding:2.5px 9px;border-radius:99px;font-size:12px;font-weight:600;white-space:nowrap}
+.statusChip .ic{font-size:11px}
+.flag{display:inline-block;margin:1px 3px 1px 0;padding:1px 7px;border-radius:6px;font-size:11px;background:color-mix(in srgb,var(--ink) 6%,transparent);color:var(--ink2);white-space:nowrap}
+.flag.hot{background:color-mix(in srgb,var(--serious) 16%,transparent);color:var(--ink)}
+.diffPlus{color:var(--crit-text);font-weight:600}
+.diffMinus{color:var(--ink);font-weight:600} /* 음수 = 초과입금: '좋음'으로 오독되지 않게 잉크색 */
+tr.detailRow>td{background:color-mix(in srgb,var(--ink) 2.5%,transparent);padding:12px 16px 14px}
+.detailGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;font-size:12.5px}
+.detailGrid h4{margin:0 0 6px;font-size:12px;color:var(--muted);font-weight:600}
+.detailGrid table{border-collapse:collapse;width:100%}
+.detailGrid td,.detailGrid th{padding:3px 6px;border-bottom:1px solid var(--grid);font-size:12.5px;text-align:left}
+.detailGrid td.r{text-align:right}
+.calc{line-height:1.7}
+.expandBtn{border:none;background:none;color:var(--accent);cursor:pointer;font-size:12px;padding:2px 4px}
+/* ───────────────────────── 시도 현황 ───────────────────────── */
+.meter{height:8px;border-radius:4px;background:var(--meter-track);overflow:hidden;min-width:110px}
+.meter>i{display:block;height:100%;background:var(--accent-strong);border-radius:4px 0 0 4px}
+.statusBar{display:flex;gap:2px;height:10px;min-width:130px;border-radius:3px;overflow:hidden}
+.statusBar>i{display:block;height:100%;min-width:2px}
+.legendRow{display:flex;flex-wrap:wrap;gap:12px;margin:6px 0 2px;font-size:12px;color:var(--ink2)}
+.legendRow .key{display:inline-flex;align-items:center;gap:5px}
+.legendRow .sw{width:10px;height:10px;border-radius:2px;display:inline-block}
+tr.sidorow{cursor:pointer}
+/* ───────────────────────── 툴팁/토스트/도움말 ───────────────────────── */
+#tooltip{position:fixed;z-index:50;pointer-events:none;background:var(--ink);color:var(--page);
+  padding:7px 10px;border-radius:8px;font-size:12px;line-height:1.5;max-width:320px;box-shadow:0 4px 14px rgba(0,0,0,.25);display:none}
+:root[data-theme="dark"] #tooltip{background:#f4f4f2;color:#111}
+#toasts{position:fixed;right:16px;bottom:16px;z-index:60;display:flex;flex-direction:column;gap:8px}
+.toast{background:var(--ink);color:var(--page);padding:10px 14px;border-radius:10px;font-size:13px;max-width:420px;box-shadow:0 6px 18px rgba(0,0,0,.3)}
+.help ol{padding-left:20px}
+.help table{border-collapse:collapse;font-size:12.5px;margin:8px 0}
+.help th,.help td{border:1px solid var(--grid);padding:5px 9px;text-align:left}
+.help th{background:color-mix(in srgb,var(--ink) 4%,transparent);font-weight:600}
+.privacy{font-size:12px;color:var(--muted);margin-top:20px;text-align:center}
+.toolhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.toolhead .grow{flex:1}
+.smallnote{font-size:12px;color:var(--muted)}
+@media (max-width:720px){ .filterRow input[type=search]{width:100%} }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div>
+    <h1>2026 노인맞춤돌봄 2차 교육비 · 입금 대사 도구</h1>
+    <div class="sub">광역지원기관 제출자료 · 납부 안내자료 · 은행 입금내역을 가상계좌 기준으로 자동 대조합니다 — 모든 계산은 이 브라우저 안에서만 수행됩니다(오프라인 사용 가능).</div>
+  </div>
+  <div class="grow"></div>
+  <button class="btn small" id="btnHelp">도움말</button>
+  <button class="btn small" id="btnTheme" title="테마 전환">테마: 자동</button>
+</div>
+
+<main>
+
+<!-- ══════════ 도움말 ══════════ -->
+<section class="card help hidden" id="helpCard">
+  <h2>사용법</h2>
+  <ol>
+    <li><strong>파일 올리기</strong> — ① 2차 교육비 <strong>납부 안내자료</strong>(전국 기준, 필수) ② 국민은행 <strong>가상계좌 입금내역</strong>(필수) ③ 광역지원기관이 제출한 <strong>납부확인서</strong>(선택, 여러 개 가능)를 한꺼번에 끌어다 놓습니다. 안내자료 파일 안에 ‘입금내역’ 시트가 함께 들어 있으면 그 파일 하나로도 동작합니다.</li>
+    <li><strong>역할 확인</strong> — 시트별로 자동 분류된 역할(기준 안내자료 / 광역 제출 확인서 / 입금내역)을 확인하고 필요하면 바꿉니다.</li>
+    <li><strong>분석 실행</strong> — 기관별 판정 결과와 시도별 현황이 표시됩니다. 결과는 엑셀로 내려받을 수 있습니다.</li>
+  </ol>
+  <h2 style="margin-top:18px">판정 기준</h2>
+  <p class="ink2" style="margin:4px 0 8px">기대 납부액 = <strong>2차 단가 × 하반기 인원(제출 확인서 기준)</strong> + <strong>1차 잔여분</strong>(1차 단가 × 상반기 인원 − 실제 1차 납입액). 확인서가 없으면 안내자료의 2차 납부금액(= 연간 총액 − 1차 납입액)을 그대로 사용합니다.</p>
+  <table>
+    <tr><th>판정</th><th>조건</th></tr>
+    <tr><td>정상</td><td>실입금 합계가 기대 납부액과 일치</td></tr>
+    <tr><td>조정납부</td><td>확인서의 조정 인원 기준 기대액과 일치(인원 변동 반영됨)</td></tr>
+    <tr><td>대상아님</td><td>기대 납부액 0원(1차 일괄·선납 등)이고 입금 없음</td></tr>
+    <tr><td>미납</td><td>기대 납부액이 있으나 입금 0원</td></tr>
+    <tr><td>확인필요 · 변동추정</td><td>차액이 전담(50,000원)·생활지원사(30,000원)의 2차분 또는 연간분 조합으로 설명 가능 — <strong>인원이 바뀌었는데 확인서에 조정이 반영되지 않았을 가능성</strong></td></tr>
+    <tr><td>확인필요 · 초과입금</td><td>기대액을 채우고도 남는 입금 건 존재(중복입금·타기관 오입금 의심). 잉여 금액과 안내액이 일치하는 미납 기관을 후보로 제시</td></tr>
+    <tr><td>확인필요 · 불일치</td><td>위 어느 경우로도 설명되지 않는 금액 차이(오입금 의심)</td></tr>
+  </table>
+  <h2 style="margin-top:18px">교육비 단가 (2026)</h2>
+  <table>
+    <tr><th>구분</th><th>연간</th><th>1차분</th><th>2차분</th></tr>
+    <tr><td>전담사회복지사 (15개 시·도)</td><td>100,000원</td><td>50,000원</td><td>50,000원</td></tr>
+    <tr><td>생활지원사 (15개 시·도)</td><td>60,000원</td><td>30,000원</td><td>30,000원</td></tr>
+    <tr><td>전담사회복지사 (대전)</td><td>85,000원</td><td>45,000원</td><td>40,000원</td></tr>
+    <tr><td>생활지원사 (대전)</td><td>45,000원</td><td>25,000원</td><td>20,000원</td></tr>
+  </table>
+  <p class="smallnote">대전은 지자체 협의 단가가 적용됩니다. 단가가 바뀌면 아래 ‘단가·판정 설정’에서 수정하세요(브라우저에 저장됩니다).</p>
+</section>
+
+<!-- ══════════ 1. 파일 업로드 ══════════ -->
+<section class="card">
+  <h2>1. 파일 올리기</h2>
+  <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="엑셀 파일 선택">
+    <strong>엑셀 파일을 여기로 끌어다 놓거나 클릭해서 선택</strong><br>
+    <span class="smallnote">납부 안내자료(필수) · 입금내역(필수) · 광역 제출 확인서(선택) — .xlsx / .xls / .csv, 여러 파일 동시 가능</span>
+  </div>
+  <input type="file" id="fileInput" multiple accept=".xlsx,.xls,.xlsm,.csv" class="hidden">
+  <div class="filelist" id="fileList"></div>
+
+  <details class="settings" style="margin-top:16px">
+    <summary>단가 · 판정 설정</summary>
+    <table class="rateTable" id="rateTable">
+      <thead><tr><th>적용 지역(시도)</th><th>전담 연간</th><th>전담 2차분</th><th>생활지원사 연간</th><th>생활지원사 2차분</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="settingsRow">
+      <button class="btn small" id="btnAddRate">특례 지역 추가</button>
+      <button class="btn small" id="btnResetRate">기본값 복원</button>
+      <label>금액 허용오차 <input type="number" id="tolInput" value="0" min="0" step="1000"> 원</label>
+      <span class="smallnote">1차분 단가는 ‘연간 − 2차분’으로 자동 계산됩니다.</span>
+    </div>
+  </details>
+
+  <div style="margin-top:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <button class="btn primary" id="btnRun" disabled>분석 실행</button>
+    <span class="smallnote" id="runHint">기준 안내자료 1개와 입금내역 1개 이상이 필요합니다.</span>
+  </div>
+</section>
+
+<!-- ══════════ 2. 결과 ══════════ -->
+<section id="results" class="hidden">
+
+  <div class="filterRow" id="filterRow">
+    <select id="sidoFilter" aria-label="시도 필터"><option value="">전체 시도</option></select>
+    <div class="chips" id="statusChips"></div>
+    <input type="search" id="searchBox" placeholder="기관명 · 기관코드 · 계좌 검색">
+    <button class="btn small" id="btnClearFilter">필터 초기화</button>
+    <div class="grow" style="flex:1"></div>
+    <button class="btn small" id="btnExport">결과 엑셀 내려받기</button>
+  </div>
+
+  <div class="kpis" id="kpiRow"></div>
+
+  <div class="card">
+    <div class="toolhead">
+      <h2 style="margin:0">시도별 현황</h2>
+      <div class="grow"></div>
+      <span class="smallnote">행을 누르면 해당 시도로 필터링됩니다 · 금액 단위: 원</span>
+    </div>
+    <div class="legendRow" id="sidoLegend"></div>
+    <div class="tableWrap"><table class="data" id="sidoTable"></table></div>
+  </div>
+
+  <div class="card">
+    <div class="toolhead">
+      <h2 style="margin:0">기관별 대사 결과</h2>
+      <span class="smallnote" id="detailCount"></span>
+      <div class="grow"></div>
+      <span class="smallnote">열 머리글 클릭 시 정렬 · ▸ 클릭 시 입금 건·산식 상세 · 금액 단위: 원</span>
+    </div>
+    <div class="tableWrap"><table class="data" id="detailTable"></table></div>
+  </div>
+
+  <div class="card hidden" id="surplusCard">
+    <h2>잉여 · 미확인 입금 <span class="smallnote" id="surplusCount"></span></h2>
+    <p class="smallnote" style="margin:0 0 6px">기대액을 채우고 남은 입금 건과 기준 자료에 없는 계좌로 들어온 입금입니다. 금액이 일치하는 미납 기관을 후보로 제시합니다.</p>
+    <div class="tableWrap"><table class="data" id="surplusTable"></table></div>
+  </div>
+
+  <div class="card hidden" id="unmatchedSubCard">
+    <h2>기준 자료와 연결되지 않은 제출 확인서 행</h2>
+    <div class="tableWrap"><table class="data" id="unmatchedSubTable"></table></div>
+  </div>
+
+</section>
+
+<p class="privacy">이 도구는 서버로 어떤 데이터도 전송하지 않습니다. 파일은 브라우저 메모리에서만 처리되며, 창을 닫으면 사라집니다. · v1.0 (2026-07)</p>
+</main>
+
+<div id="tooltip" role="tooltip"></div>
+<div id="toasts"></div>
+
+<script>
+"use strict";
+/* ════════════════════════════ 공용 유틸 ════════════════════════════ */
+const $ = s => document.querySelector(s);
+const el = (tag, attrs, ...kids) => {
+  const n = document.createElement(tag);
+  if (attrs) for (const [k,v] of Object.entries(attrs)) {
+    if (k === 'class') n.className = v;
+    else if (k === 'text') n.textContent = v;
+    else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
+    else n.setAttribute(k, v);
+  }
+  for (const k of kids) if (k != null) n.appendChild(typeof k === 'string' ? document.createTextNode(k) : k);
+  return n;
+};
+const fmt = n => (n == null || isNaN(n)) ? '–' : Math.round(n).toLocaleString('ko-KR');
+const wonCompact = v => {                     // 1,077,730,000 → "10.78억" / 18,690,000 → "1,869만"
+  const n = Math.round(v), a = Math.abs(n), sign = n < 0 ? '−' : '';
+  if (a >= 100000000) return sign + (a/100000000).toLocaleString('ko-KR',{maximumFractionDigits:2}) + '억';
+  if (a >= 10000) return sign + Math.round(a/10000).toLocaleString('ko-KR') + '만';
+  return sign + a.toLocaleString('ko-KR');
+};
+const norm = v => v == null ? '' : String(v).replace(/\s+/g,' ').trim();
+const digits = v => norm(v).replace(/\D/g,'');
+const toNum = v => {
+  if (v == null || v === '') return null;
+  if (typeof v === 'number') return v;
+  const s = String(v).replace(/[,\s원]/g,'');
+  if (!s || !/^-?\d+(\.\d+)?$/.test(s)) return null;
+  return Number(s);
+};
+function fmtDateVal(v){                       // 표시용: 엑셀 직렬값/문자/Date 모두 수용
+  if (v == null || v === '') return '';
+  if (v instanceof Date) return v.toISOString().slice(0,10);
+  if (typeof v === 'number' && v > 20000 && v < 80000) {
+    const d = new Date(Math.round((v - 25569) * 86400 * 1000));
+    const p = n => String(n).padStart(2,'0');
+    const t = d.getUTCHours()+d.getUTCMinutes() ? ` ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}` : '';
+    return `${d.getUTCFullYear()}-${p(d.getUTCMonth()+1)}-${p(d.getUTCDate())}${t}`;
+  }
+  return norm(v);
+}
+function dateKey(v){                          // 비교용 YYYY-MM-DD 또는 null
+  const s = fmtDateVal(v);
+  const m = s.match(/(\d{4})[.\-\/]\s?(\d{1,2})[.\-\/]\s?(\d{1,2})/);
+  return m ? `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}` : null;
+}
+function toast(msg){
+  const t = el('div',{class:'toast',text:msg});
+  $('#toasts').appendChild(t);
+  setTimeout(()=>t.remove(), 6000);
+}
+/* 툴팁 */
+const tip = $('#tooltip');
+function bindTip(node, htmlBuilder){
+  node.addEventListener('pointerenter', e=>{ tip.replaceChildren(htmlBuilder()); tip.style.display='block'; moveTip(e); });
+  node.addEventListener('pointermove', moveTip);
+  node.addEventListener('pointerleave', ()=> tip.style.display='none');
+}
+function moveTip(e){
+  const pad=14, w=tip.offsetWidth, h=tip.offsetHeight;
+  tip.style.left = Math.min(e.clientX+pad, innerWidth-w-8)+'px';
+  tip.style.top  = Math.min(e.clientY+pad, innerHeight-h-8)+'px';
+}
+
+/* ════════════════════════════ 테마 ════════════════════════════ */
+(function(){
+  const KEY='eduFeeTheme', labels={auto:'자동',light:'라이트',dark:'다크'};
+  let mode = 'auto'; try{ mode = localStorage.getItem(KEY)||'auto'; }catch(e){}
+  const apply = ()=>{ document.documentElement.setAttribute('data-theme', mode==='auto'?'':mode); if(mode==='auto') document.documentElement.removeAttribute('data-theme'); $('#btnTheme').textContent='테마: '+labels[mode]; };
+  $('#btnTheme').addEventListener('click',()=>{ mode = mode==='auto'?'light':mode==='light'?'dark':'auto'; try{localStorage.setItem(KEY,mode);}catch(e){} apply(); });
+  apply();
+})();
+$('#btnHelp').addEventListener('click',()=> $('#helpCard').classList.toggle('hidden'));
+
+/* ════════════════════════════ 단가 설정 ════════════════════════════ */
+const RATE_KEY='eduFeeRates2026v1';
+const DEFAULT_RATES = [
+  {sido:'', wy:100000, w2:50000, ly:60000, l2:30000, fixed:true},     // 기본(전체)
+  {sido:'대전광역시', wy:85000, w2:40000, ly:45000, l2:20000},
+];
+let rates = loadRates();
+function loadRates(){
+  try{ const s = localStorage.getItem(RATE_KEY); if(s){ const v = JSON.parse(s); if(Array.isArray(v)&&v.length) return v; } }catch(e){}
+  return JSON.parse(JSON.stringify(DEFAULT_RATES));
+}
+function saveRates(){ try{ localStorage.setItem(RATE_KEY, JSON.stringify(rates)); }catch(e){} }
+function rateFor(sido){
+  const hit = rates.find(r=>r.sido && sido && norm(sido).includes(norm(r.sido).replace(/(특별시|광역시|특별자치도|특별자치시|도)$/,'')) );
+  return hit || rates[0];
+}
+function renderRateTable(){
+  const tb = $('#rateTable tbody'); tb.replaceChildren();
+  rates.forEach((r,i)=>{
+    const tr = el('tr');
+    const mk = (key)=> el('input',{type:'number',value:r[key],step:1000,min:0,oninput:e=>{r[key]=toNum(e.target.value)||0; saveRates();}});
+    tr.appendChild(el('td',null, r.fixed ? el('strong',{text:'기본(전체 시·도)'})
+      : el('input',{type:'text',value:r.sido,placeholder:'예: 대전광역시',oninput:e=>{r.sido=e.target.value; saveRates();}})));
+    for (const k of ['wy','w2','ly','l2']) tr.appendChild(el('td',null, mk(k)));
+    tr.appendChild(el('td',null, r.fixed?null: el('button',{class:'btn small',text:'삭제',onclick:()=>{rates.splice(i,1);saveRates();renderRateTable();}})));
+    tb.appendChild(tr);
+  });
+}
+$('#btnAddRate').addEventListener('click',()=>{ rates.push({sido:'',wy:100000,w2:50000,ly:60000,l2:30000}); saveRates(); renderRateTable(); });
+$('#btnResetRate').addEventListener('click',()=>{ rates = JSON.parse(JSON.stringify(DEFAULT_RATES)); saveRates(); renderRateTable(); toast('단가를 기본값으로 되돌렸습니다.'); });
+renderRateTable();
+
+/* ════════════════════════════ 파일 파싱 ════════════════════════════ */
+const state = { sheets: [], result: null, filters:{sido:'',statuses:new Set(),q:''}, sort:{key:'sev',dir:1} };
+
+const dz = $('#dropzone'), fi = $('#fileInput');
+dz.addEventListener('click', ()=> fi.click());
+dz.addEventListener('keydown', e=>{ if(e.key==='Enter'||e.key===' ') fi.click(); });
+['dragover','dragenter'].forEach(ev=> dz.addEventListener(ev, e=>{ e.preventDefault(); dz.classList.add('drag'); }));
+['dragleave','drop'].forEach(ev=> dz.addEventListener(ev, e=>{ e.preventDefault(); dz.classList.remove('drag'); }));
+dz.addEventListener('drop', e=> handleFiles(Array.from(e.dataTransfer.files)));
+fi.addEventListener('change', ()=>{ const files = Array.from(fi.files); fi.value=''; handleFiles(files); });
+
+async function handleFiles(files){
+  for (const f of files){
+    try{
+      const buf = await f.arrayBuffer();
+      const wb = XLSX.read(buf, {type:'array', cellDates:false});
+      let found = 0;
+      for (const name of wb.SheetNames){
+        const ws = wb.Sheets[name];
+        if (!ws || !ws['!ref']) continue;
+        const parsed = parseSheet(ws);
+        if (!parsed) continue;
+        parsed.file = f.name; parsed.sheet = name;
+        parsed.id = state.sheets.length;
+        parsed.role = null;
+        state.sheets.push(parsed); found++;
+      }
+      if (!found) toast(`'${f.name}'에서 인식 가능한 시트를 찾지 못했습니다.`);
+    }catch(err){ console.error(err); toast(`'${f.name}' 파일을 읽지 못했습니다: ${err.message}`); }
+  }
+  autoAssignRoles();
+  renderFileList();
+}
+
+function sheetRows(ws){
+  const ref = XLSX.utils.decode_range(ws['!ref']);
+  const cap = {s:{r:ref.s.r,c:ref.s.c}, e:{r:Math.min(ref.e.r, 20000), c:Math.min(ref.e.c, 80)}};
+  return XLSX.utils.sheet_to_json(ws, {header:1, raw:true, defval:null, range:XLSX.utils.encode_range(cap)});
+}
+function ffill(row, n){
+  const out = []; let last = '';
+  for (let c=0;c<n;c++){ const s = norm(row && row[c]); if (s) last = s; out[c] = last; }
+  return out;
+}
+
+function parseSheet(ws){
+  const rows = sheetRows(ws);
+  const scanMax = Math.min(15, rows.length);
+  for (let i=0;i<scanMax;i++){
+    const cells = (rows[i]||[]).map(norm);
+    if (cells.some(c=>c.includes('가상계좌번호')) && (cells.some(c=>c.includes('입금의뢰인'))||cells.some(c=>c.includes('총입금금액'))))
+      return parseDepositSheet(rows, i);
+    if (cells.some(c=>c.includes('기관코드')) && cells.some(c=>c.includes('기관명')))
+      return parseFormSheet(rows, i);
+  }
+  return null;
+}
+
+/* ── 안내자료/확인서 (같은 서식) ── */
+function parseFormSheet(rows, hr){
+  const leaf = (rows[hr]||[]).map(norm);
+  const n = Math.max(leaf.length, (rows[hr-1]||[]).length, 24);
+  const g1 = ffill(rows[hr-1], n), g2 = ffill(rows[hr-2], n);
+  const col = {};
+  const set = (k,c)=>{ if(col[k]==null) col[k]=c; };
+  for (let c=0;c<n;c++){
+    const l = leaf[c]||'', g = (g1[c]||'')+' '+(g2[c]||'');
+    if (!l && !g) continue;
+    if (l.includes('연번')) set('no',c);
+    else if (l.includes('기관코드')) set('code',c);
+    else if (l === '시도' || (l.includes('시도')&&!l.includes('시군구'))) set('sido',c);
+    else if (l.includes('시군구')) set('sgg',c);
+    else if (l.includes('기관명')) set('name',c);
+    else if (l.includes('가상계좌')||l.includes('은행')||l.includes('계좌번호')||(g.includes('가상계좌')&&!g.includes('납부내역'))) set('acct',c);
+    else if (g.includes('배정')||g.includes('수행인력 배정')){
+      if (l.includes('전담')) set('w0',c); else if (l.includes('생활')) set('l0',c); else if (l.includes('합계')) set('t0',c);
+    }
+    else if (g.includes('1차')){
+      if (l.includes('총계')) set('k1',c); else if (l.includes('납부일')) set('d1',c);
+      else if (l.includes('전담')) set('k1w',c); else if (l.includes('생활')) set('k1l',c);
+    }
+    else if (g.includes('2차')){
+      if (l.includes('총계')) set('o2',c); else if (l.includes('전담')) set('o2w',c); else if (l.includes('생활')) set('o2l',c);
+    }
+    else if (g.includes('납부내역')||g.includes('납부확인서')){
+      if (l.includes('납부금액')) set('paidQ',c); else if (l.includes('납부일')) set('paidD',c);
+      else if (l.includes('차액')) set('gapCol',c); else if (l.includes('기타')) set('note2',c);
+      else if (l.includes('비고')) set('note',c);
+    }
+    else if (g.includes('연간')){ if (l.includes('총계')) set('yT',c); }
+    else if (l.includes('기타')) set('note2',c);
+    else if (l.includes('비고')) set('note',c);
+  }
+  if (col.code == null || col.name == null) return null;
+  const recs = [];
+  for (let r=hr+1;r<rows.length;r++){
+    const row = rows[r]||[];
+    const code = norm(row[col.code]), name = norm(row[col.name]);
+    if (!code || code==='-' || !name) continue;
+    recs.push({
+      code, name,
+      sido: norm(row[col.sido]), sgg: norm(row[col.sgg]),
+      w0: toNum(row[col.w0])??0, l0: toNum(row[col.l0])??0,
+      k1: toNum(row[col.k1])??0, d1: row[col.d1],
+      o2: toNum(row[col.o2]),
+      acct: col.acct!=null ? digits(row[col.acct]) : '',
+      acctRaw: col.acct!=null ? norm(row[col.acct]) : '',
+      paidQ: col.paidQ!=null ? toNum(row[col.paidQ]) : null,
+      paidD: col.paidD!=null ? row[col.paidD] : null,
+      note: [col.note!=null?norm(row[col.note]):'', col.note2!=null?norm(row[col.note2]):''].filter(Boolean).join(' / '),
+    });
+  }
+  if (!recs.length) return null;
+  const sidos = new Set(recs.map(r=>r.sido).filter(Boolean));
+  return { type:'form', recs, sidos, multiSido: sidos.size>1 };
+}
+
+/* ── 입금내역 ── */
+function parseDepositSheet(rows, hr){
+  const leaf = (rows[hr]||[]).map(norm);
+  const idx = {};
+  leaf.forEach((l,c)=>{
+    if (!l) return;
+    if (l.includes('입금일시')||l.includes('거래일시')) idx.dt ??= c;
+    else if (l.includes('가상계좌번호')) idx.acct ??= c;
+    else if (l.includes('입금의뢰인')||l.includes('입금자')) idx.payer ??= c;
+    else if (l.includes('등록고유번호')) idx.reg ??= c;
+    else if (l.includes('총입금금액')) idx.amt ??= c;
+    else if (l.includes('현금입금금액')) idx.amtCash ??= c;
+    else if (l.includes('입금상태')) idx.status ??= c;
+  });
+  if (idx.acct == null || (idx.amt == null && idx.amtCash == null)) return null;
+  const recs = []; let excluded = 0;
+  for (let r=hr+1;r<rows.length;r++){
+    const row = rows[r]||[];
+    const acct = digits(row[idx.acct]);
+    if (!acct) continue;
+    const amt = toNum(row[idx.amt ?? idx.amtCash]);
+    if (amt == null) continue;
+    const st = idx.status!=null ? norm(row[idx.status]) : '';
+    if (st && st !== '입금완료'){ excluded++; continue; }
+    recs.push({ acct, amt, dt: fmtDateVal(row[idx.dt]), payer: norm(row[idx.payer]), reg: norm(row[idx.reg]) });
+  }
+  if (!recs.length) return null;
+  return { type:'deposit', recs, excluded };
+}
+
+/* ── 역할 자동 배정 ── */
+const ROLES = { base:'기준 안내자료', sub:'광역 제출 확인서', dep:'입금내역', off:'사용 안 함' };
+function autoAssignRoles(){
+  let baseChosen = state.sheets.some(s=>s.role==='base');
+  for (const s of state.sheets){
+    if (s.role !== null) continue;
+    if (s.type === 'deposit') s.role = 'dep';
+    else if (s.type === 'form'){
+      if (s.multiSido && !baseChosen){ s.role='base'; baseChosen=true; }
+      else if (s.multiSido) s.role='off';
+      else s.role='sub';
+    } else s.role='off';
+  }
+}
+function renderFileList(){
+  const list = $('#fileList'); list.replaceChildren();
+  state.sheets.forEach(s=>{
+    const roleSel = el('select', {onchange:e=>{ s.role=e.target.value; updateRunButton(); }});
+    for (const [v,label] of Object.entries(ROLES))
+      roleSel.appendChild(el('option',{value:v,text:label,...(s.role===v?{selected:''}:{})}));
+    const meta = s.type==='form'
+      ? `기관 ${s.recs.length}곳 · 시도 ${s.sidos.size}개${s.multiSido?'':' ('+[...s.sidos][0]+')'}`
+      : `입금 ${s.recs.length}건${s.excluded?` · 제외 ${s.excluded}건(입금완료 아님)`:''}`;
+    list.appendChild(el('div',{class:'filerow'},
+      el('span',{class:'fname',title:s.file,text:s.file}),
+      el('span',{class:'badge',text:s.sheet}),
+      el('span',{class:'badge',text:meta}),
+      el('span',{style:'flex:1'}),
+      el('span',{class:'roleTag',text:'역할'}), roleSel,
+      el('button',{class:'btn small',text:'제거',onclick:()=>{ state.sheets = state.sheets.filter(x=>x!==s); renderFileList(); }})
+    ));
+  });
+  updateRunButton();
+}
+function updateRunButton(){
+  const hasBase = state.sheets.some(s=>s.role==='base');
+  const hasDep = state.sheets.some(s=>s.role==='dep');
+  $('#btnRun').disabled = !(hasBase && hasDep);
+  $('#runHint').textContent = hasBase && hasDep ? '준비 완료 — 분석을 실행하세요.'
+    : !hasBase && !hasDep ? '기준 안내자료 1개와 입금내역 1개 이상이 필요합니다.'
+    : !hasBase ? '기준 안내자료(전국 납부 안내)가 필요합니다.' : '입금내역 시트가 필요합니다.';
+}
+
+/* ════════════════════════════ 대사(對査) 엔진 ════════════════════════════ */
+const STATUS = {
+  ok:    {label:'정상',              color:'var(--good)',    icon:'✓', sev:5},
+  okadj: {label:'조정납부',          color:'var(--good)',    icon:'✓', sev:4},
+  zero:  {label:'대상아님',          color:'var(--axis)',    icon:'–', sev:6},
+  unpaid:{label:'미납',              color:'var(--crit)',    icon:'✕', sev:2},
+  est:   {label:'확인필요·변동추정',  color:'var(--warn)',    icon:'⚠', sev:1},
+  over:  {label:'확인필요·초과입금',  color:'var(--serious)', icon:'▲', sev:0},
+  mism:  {label:'확인필요·불일치',    color:'var(--serious)', icon:'⚠', sev:0},
+};
+const NEED_CHECK = ['est','over','mism'];
+
+function explainDiff(diff, R, preferAnnual){
+  // diff = 기대 − 실입금. a×전담 + b×생지 조합 탐색 (2차분/연간분 두 계열)
+  const fams = [
+    {name:'2차분', W:R.w2, L:R.l2},
+    {name:'연간분', W:R.wy, L:R.ly},
+  ];
+  if (preferAnnual) fams.reverse();
+  let best = null;
+  fams.forEach((f,fi)=>{
+    for (let a=-4;a<=4;a++){
+      const rem = diff - a*f.W;
+      if (f.L<=0 || rem % f.L !== 0) continue;
+      const b = rem / f.L;
+      if (!Number.isInteger(b) || Math.abs(b)>10 || (a===0&&b===0)) continue;
+      const score = Math.abs(a)+Math.abs(b) + fi*0.1 + Math.abs(a)*0.01;
+      if (!best || score < best.score) best = {score, fam:f, a, b};
+    }
+  });
+  if (!best) return null;
+  const dir = diff > 0 ? '감소(부족)' : '증가(초과)';
+  const partsTxt = [];
+  if (best.a) partsTxt.push(`전담사회복지사 ${Math.abs(best.a)}명×${fmt(best.fam.W)}원`);
+  if (best.b) partsTxt.push(`생활지원사 ${Math.abs(best.b)}명×${fmt(best.fam.L)}원`);
+  return { ...best, text:`차액 ${diff>0?'+':''}${fmt(diff)}원 = ${partsTxt.join(' + ')} (${best.fam.name}) — 인원 ${dir} 가능성` };
+}
+
+function subsetMatch(amounts, target, tol){
+  // 입금 건 부분집합 중 합이 target인 것 → 사용된 인덱스 집합 (최대 14건까지 완전탐색)
+  const n = amounts.length;
+  if (n===0 || n>14) return null;
+  for (let mask=1; mask < (1<<n); mask++){
+    let s=0; for(let i=0;i<n;i++) if(mask&(1<<i)) s+=amounts[i];
+    if (Math.abs(s-target)<=tol) return mask;
+  }
+  return null;
+}
+
+function runAnalysis(){
+  const tol = toNum($('#tolInput').value) ?? 0;
+  const baseSheet = state.sheets.find(s=>s.role==='base');
+  const depSheets = state.sheets.filter(s=>s.role==='dep');
+  const subSheets = state.sheets.filter(s=>s.role==='sub');
+  if (!baseSheet || !depSheets.length) return;
+
+  /* 입금 통합 + 중복 제거 */
+  const seen = new Set(); const deps = []; let dupSkipped = 0;
+  for (const sh of depSheets) for (const d of sh.recs){
+    const key = d.acct+'|'+d.dt+'|'+d.amt;
+    if (seen.has(key)){ dupSkipped++; continue; }
+    seen.add(key); deps.push(d);
+  }
+  const depByAcct = new Map();
+  deps.forEach((d,i)=>{ d.i=i; d.used=false; if(!depByAcct.has(d.acct)) depByAcct.set(d.acct,[]); depByAcct.get(d.acct).push(d); });
+
+  /* 제출 확인서 인덱스 */
+  const subByCode = new Map(), subByAcct = new Map(), subSidos = new Set();
+  const allSubs = [];
+  for (const sh of subSheets) for (const r of sh.recs){
+    allSubs.push(r);
+    if (r.code && !subByCode.has(r.code)) subByCode.set(r.code, r);
+    if (r.acct && !subByAcct.has(r.acct)) subByAcct.set(r.acct, r);
+    if (r.sido) subSidos.add(r.sido);
+  }
+  const matchedSubs = new Set();
+
+  /* 기관별 판정 */
+  const orgs = [];
+  for (const b of baseSheet.recs){
+    const R0 = rateFor(b.sido);
+    const R = { wy:R0.wy, w2:R0.w2, ly:R0.ly, l2:R0.l2, w1:R0.wy-R0.w2, l1:R0.ly-R0.l2 };
+    const sub = subByCode.get(b.code) || (b.acct && subByAcct.get(b.acct)) || null;
+    if (sub) matchedSubs.add(sub);
+    const F1 = sub && sub.w0!=null ? sub.w0 : b.w0;
+    const G1 = sub && sub.l0!=null ? sub.l0 : b.l0;
+    const adjusted = !!sub && (F1!==b.w0 || G1!==b.l0);
+    const annCalc = b.w0*R.wy + b.l0*R.ly - b.k1;           // 산식상 안내액
+    const announced = b.o2 != null ? b.o2 : annCalc;         // 파일의 안내액(우선)
+    let expected = F1*R.w2 + G1*R.l2 + (b.w0*R.w1 + b.l0*R.l1 - b.k1);
+    const flags = [];
+    if (b.o2 != null && Math.abs(annCalc - b.o2) > tol) flags.push({t:'안내액≠산식', hot:true, tip:`안내자료 2차 금액 ${fmt(b.o2)}원 ≠ 산식(연간−1차 납입) ${fmt(annCalc)}원`});
+    if (expected < 0){ flags.push({t:'환급검토', hot:true, tip:`계산상 기대액이 음수(${fmt(expected)}원) — 1차 과납 환급 검토 필요`}); }
+
+    const dlist = depByAcct.get(b.acct) || [];
+    const paid = dlist.reduce((s,d)=>s+d.amt,0);
+    const diff = expected - paid;
+    if (dlist.length > 1) flags.push({t:`분할입금 ${dlist.length}건`, tip:dlist.map(d=>`${d.dt} ${fmt(d.amt)}원`).join('\n')});
+
+    /* 상태 결정 */
+    let status, explain=null, surplus=[];
+    const eq = Math.abs(diff) <= tol;
+    if (eq && expected <= tol && paid <= tol) status = 'zero';
+    else if (eq) status = adjusted ? 'okadj' : 'ok';
+    else if (paid <= tol) status = 'unpaid';
+    else {
+      const mask = paid > expected && expected > tol ? subsetMatch(dlist.map(d=>d.amt), expected, tol) : null;
+      if (mask != null){
+        status = 'over';
+        dlist.forEach((d,i)=>{ if(!(mask&(1<<i))) surplus.push(d); });
+        const sTot = surplus.reduce((s,d)=>s+d.amt,0);
+        const ex = explainDiff(-Math.round(sTot), R, b.k1===0);
+        if (ex) flags.push({t:'인원증가분 가능성', tip:`잉여 입금 ${fmt(sTot)}원이 인원 단가 조합과 일치: ${ex.text}`});
+      } else if (expected <= tol && paid > tol){
+        status = 'over'; surplus = dlist.slice();
+      } else {
+        explain = explainDiff(Math.round(diff), R, b.k1===0);
+        if (explain && !adjusted) status = 'est';
+        else status = 'mism';
+      }
+    }
+    if (adjusted) flags.push({t:`인원조정 ${b.w0}+${b.l0}→${F1}+${G1}`, tip:`확인서 기준 전담 ${b.w0}→${F1}, 생활지원사 ${b.l0}→${G1}`});
+    if (sub && sub.paidQ != null && Math.abs(sub.paidQ - paid) > tol)
+      flags.push({t:'제출액≠입금액', hot:true, tip:`확인서 납부금액 ${fmt(sub.paidQ)}원 ≠ 실입금 ${fmt(paid)}원`});
+    if (sub && sub.paidD && dlist.length){
+      const dk = dateKey(sub.paidD);
+      if (dk && !dlist.some(d=>dateKey(d.dt)===dk)) flags.push({t:'납부일 상이', tip:`확인서 납부일 ${fmtDateVal(sub.paidD)} / 실제 입금일 ${dlist.map(d=>d.dt).join(', ')}`});
+    }
+    if (!sub && subSidos.has(b.sido) && expected > tol) flags.push({t:'확인서 미기재', tip:'해당 시도 제출 확인서에 이 기관이 없습니다.'});
+
+    orgs.push({ b, R, sub, F1, G1, adjusted, announced, expected, paid, diff, dlist, status, explain, surplus, flags });
+  }
+
+  /* 잉여/미확인 입금 → 오입금 후보 탐색 */
+  const surplusRows = [];
+  for (const o of orgs) for (const d of o.surplus) surplusRows.push({d, from:o});
+  const knownAccts = new Set(baseSheet.recs.map(r=>r.acct));
+  const unknownDeps = deps.filter(d=>!knownAccts.has(d.acct));
+  for (const d of unknownDeps) surplusRows.push({d, from:null});
+  const outstanding = orgs.filter(o=>['unpaid','est','mism'].includes(o.status) && o.expected - o.paid > tol);
+  for (const srow of surplusRows){
+    const amt = srow.d.amt;
+    const cands = outstanding.filter(o=>Math.abs((o.expected - o.paid) - amt) <= tol);
+    cands.sort((a,bb)=>{
+      const sa = srow.from && a.b.sido===srow.from.b.sido ? 0:1;
+      const sb = srow.from && bb.b.sido===srow.from.b.sido ? 0:1;
+      return sa-sb;
+    });
+    srow.cands = cands.slice(0,4);
+  }
+  /* 후보로 지목된 기관에도 역링크 */
+  const backlink = new Map();
+  for (const srow of surplusRows) for (const c of srow.cands||[]){
+    if (!backlink.has(c)) backlink.set(c, []);
+    backlink.get(c).push(srow);
+  }
+  for (const [o, rows] of backlink) o.flags.push({t:'오입금 후보 있음', hot:true,
+    tip: rows.map(r=>`${r.from? r.from.b.name : '미확인 계좌'} 계좌의 잉여 입금 ${fmt(r.d.amt)}원 (${r.d.dt}, 의뢰인 ${r.d.payer||'?'})`).join('\n')});
+
+  const unmatchedSubs = allSubs.filter(s=>!matchedSubs.has(s));
+  state.result = { orgs, deps, surplusRows, unmatchedSubs, dupSkipped, tol,
+    baseInfo:`${baseSheet.file} · ${baseSheet.sheet}`, subCount: subSheets.length };
+  if (dupSkipped) toast(`중복된 입금 행 ${dupSkipped}건을 제외했습니다(여러 파일에 같은 내역).`);
+  state.filters = {sido:'', statuses:new Set(), q:''};
+  state.sort = {key:'sev', dir:1};
+  renderResults();
+  $('#results').classList.remove('hidden');
+  $('#results').scrollIntoView({behavior:'smooth', block:'start'});
+}
+$('#btnRun').addEventListener('click', runAnalysis);
+
+/* ════════════════════════════ 렌더링 ════════════════════════════ */
+function statusChip(st){
+  const s = STATUS[st];
+  const chip = el('span',{class:'statusChip'}, el('span',{class:'ic','aria-hidden':'true',text:s.icon}), s.label);
+  chip.style.background = `color-mix(in srgb, ${s.color} calc(var(--chip-alpha)*100%), transparent)`;
+  chip.style.color = 'var(--ink)';
+  chip.querySelector('.ic').style.color = s.color;
+  return chip;
+}
+function filteredOrgs(){
+  const {sido, statuses, q} = state.filters;
+  const qq = norm(q).toLowerCase();
+  return state.result.orgs.filter(o=>{
+    if (sido && o.b.sido !== sido) return false;
+    if (statuses.size && !statuses.has(o.status)) return false;
+    if (qq){
+      const hay = (o.b.name+' '+o.b.code+' '+o.b.sgg+' '+o.b.acctRaw).toLowerCase();
+      if (!hay.includes(qq)) return false;
+    }
+    return true;
+  });
+}
+
+function renderResults(){
+  renderFilters();
+  renderKPIs();
+  renderSidoTable();
+  renderDetailTable();
+  renderSurplus();
+  renderUnmatchedSubs();
+}
+
+function renderFilters(){
+  const sel = $('#sidoFilter');
+  const cur = state.filters.sido;
+  sel.replaceChildren(el('option',{value:'',text:'전체 시도'}));
+  [...new Set(state.result.orgs.map(o=>o.b.sido))].forEach(s=> sel.appendChild(el('option',{value:s,text:s,...(s===cur?{selected:''}:{})})));
+  sel.onchange = ()=>{ state.filters.sido = sel.value; renderKPIs(); renderDetailTable(); };
+  const counts = {};
+  for (const o of state.result.orgs) counts[o.status]=(counts[o.status]||0)+1;
+  const chips = $('#statusChips'); chips.replaceChildren();
+  for (const [k,s] of Object.entries(STATUS)){
+    if (!counts[k]) continue;
+    const c = el('button',{class:'chip'+(state.filters.statuses.has(k)?' on':''), onclick:()=>{
+      state.filters.statuses.has(k) ? state.filters.statuses.delete(k) : state.filters.statuses.add(k);
+      renderResults();
+    }}, el('span',{class:'dot'}), `${s.label} `, el('span',{class:'cnt',text:counts[k]}));
+    c.querySelector('.dot').style.background = s.color;
+    chips.appendChild(c);
+  }
+  $('#searchBox').oninput = e=>{ state.filters.q = e.target.value; renderDetailTable(); };
+  $('#searchBox').value = state.filters.q;
+  $('#btnClearFilter').onclick = ()=>{ state.filters={sido:'',statuses:new Set(),q:''}; renderResults(); };
+  $('#btnExport').onclick = exportXlsx;
+}
+
+function renderKPIs(){
+  const list = state.filters.sido ? state.result.orgs.filter(o=>o.b.sido===state.filters.sido) : state.result.orgs;
+  const sum = (f)=> list.reduce((s,o)=>s+f(o),0);
+  const cnt = (pred)=> list.filter(pred).length;
+  const done = cnt(o=>o.status==='ok'||o.status==='okadj');
+  const zero = cnt(o=>o.status==='zero');
+  const need = cnt(o=>NEED_CHECK.includes(o.status));
+  const unpaid = cnt(o=>o.status==='unpaid');
+  const exp = sum(o=>Math.max(0,o.expected)), paid = sum(o=>o.paid);
+  const target = list.length - zero;
+  const kpi = (label, value, sub, cls)=> {
+    const k = el('div',{class:'kpi'+(cls?' '+cls:'')},
+      el('div',{class:'label',text:label}), el('div',{class:'value'}), el('div',{class:'sub',text:sub||''}));
+    k.querySelector('.value').append(value);
+    return k;
+  };
+  const won = v => { const s=el('span',{text:wonCompact(v)}); const u=el('span',{class:'unit',text:'원'}); const w=el('span'); w.append(s,u); return w; };
+  const row = $('#kpiRow'); row.replaceChildren(
+    kpi('대상 기관', el('span',{text:fmt(list.length)}), `납부대상 ${fmt(target)} · 0원 대상 ${fmt(zero)}`),
+    kpi('납부완료', el('span',{text:fmt(done)}), target?`납부대상의 ${(done/target*100).toFixed(1)}%`:'', 'goodv'),
+    kpi('확인필요', el('span',{text:fmt(need)}), '금액 불일치 · 초과입금 포함', need?'alert':''),
+    kpi('미납', el('span',{text:fmt(unpaid)}), '입금 내역 없음', unpaid?'alert':''),
+    kpi('기대 수납액 (조정 반영)', won(exp), `${fmt(exp)}원`),
+    kpi('실제 입금액', won(paid), `${fmt(paid)}원 · ${fmt(state.result.deps.length)}건`),
+    kpi('미수납 차액', won(exp-paid), `${fmt(exp-paid)}원`, exp-paid>0?'alert':(exp-paid<0?'':'goodv')),
+  );
+}
+
+function renderSidoTable(){
+  const legend = $('#sidoLegend'); legend.replaceChildren();
+  const legendDefs = [['완납','var(--good)'],['확인필요','var(--serious)'],['미납','var(--crit)'],['대상아님','var(--axis)']];
+  for (const [t,c] of legendDefs){
+    const k = el('span',{class:'key'}, el('span',{class:'sw'}), t);
+    k.querySelector('.sw').style.background = c;
+    legend.appendChild(k);
+  }
+  const by = new Map();
+  for (const o of state.result.orgs){
+    if (!by.has(o.b.sido)) by.set(o.b.sido,{n:0,exp:0,paid:0,done:0,need:0,unpaid:0,zero:0});
+    const b = by.get(o.b.sido);
+    b.n++; b.exp+=Math.max(0,o.expected); b.paid+=o.paid;
+    if (o.status==='ok'||o.status==='okadj') b.done++;
+    else if (NEED_CHECK.includes(o.status)) b.need++;
+    else if (o.status==='unpaid') b.unpaid++;
+    else b.zero++;
+  }
+  const t = $('#sidoTable'); t.replaceChildren();
+  t.appendChild(el('thead',null, el('tr',null,
+    ...['시도','기관','수납률(금액)','','기대 수납액','실제 입금액','차액','기관 상태'].map((h,i)=>el('th',{class:i>=4&&i<=6?'r':'',text:h})))));
+  const tb = el('tbody');
+  const totals = {n:0,exp:0,paid:0,done:0,need:0,unpaid:0,zero:0};
+  for (const [sido,b] of by){
+    Object.keys(totals).forEach(k=>totals[k]+=b[k]);
+    tb.appendChild(sidoRow(sido,b,false));
+  }
+  tb.appendChild(sidoRow('전체',totals,true));
+  t.appendChild(tb);
+
+  function sidoRow(sido,b,isTotal){
+    const pct = b.exp>0 ? b.paid/b.exp*100 : 100;
+    const meter = el('div',{class:'meter'}, el('i'));
+    meter.querySelector('i').style.width = Math.max(0,Math.min(100,pct))+'%';
+    const bar = el('div',{class:'statusBar'});
+    const segs = [[b.done,'var(--good)','완납'],[b.need,'var(--serious)','확인필요'],[b.unpaid,'var(--crit)','미납'],[b.zero,'var(--axis)','대상아님']];
+    for (const [v,c,lab] of segs){
+      if (!v) continue;
+      const i = el('i',{title:''}); i.style.flex = String(v); i.style.background = c;
+      bar.appendChild(i);
+    }
+    bindTip(bar, ()=>{
+      const box = el('div');
+      box.appendChild(el('div',null,el('strong',{text:sido})));
+      segs.forEach(([v,c,lab])=>{ if(v) box.appendChild(el('div',{text:`${lab} ${fmt(v)}곳`})); });
+      return box;
+    });
+    const tr = el('tr',{class:isTotal?'':'sidorow'},
+      el('td',null,isTotal?el('strong',{text:sido}):document.createTextNode(sido)),
+      el('td',{class:'num',text:fmt(b.n)}),
+      el('td',null,meter),
+      el('td',{class:'num nowrap',text:pct.toFixed(1)+'%'}),
+      el('td',{class:'num',text:fmt(b.exp)}),
+      el('td',{class:'num',text:fmt(b.paid)}),
+      el('td',{class:'num'}, diffSpan(b.exp-b.paid)),
+      el('td',null,bar),
+    );
+    if (!isTotal) tr.addEventListener('click',()=>{ state.filters.sido = state.filters.sido===sido?'':sido; $('#sidoFilter').value=state.filters.sido; renderKPIs(); renderDetailTable(); });
+    return tr;
+  }
+}
+function diffSpan(d){
+  const s = el('span',{class:'num'});
+  if (Math.abs(d) < .5){ s.textContent='0'; s.classList.add('muted'); }
+  else { s.textContent = (d>0?'+':'')+fmt(d); s.classList.add(d>0?'diffPlus':'diffMinus'); }
+  return s;
+}
+
+const COLS = [
+  {key:'sev',   label:'상태',      get:o=>STATUS[o.status].sev},
+  {key:'sido',  label:'시도',      get:o=>o.b.sido+o.b.sgg},
+  {key:'name',  label:'기관',      get:o=>o.b.name},
+  {key:'hc0',   label:'안내 인원', get:o=>o.b.w0+o.b.l0, r:1, title:'전담+생활지원사 (1차 확인서 기준)'},
+  {key:'hc1',   label:'제출 인원', get:o=>o.sub?o.F1+o.G1:-1, r:1, title:'광역 제출 확인서 기준'},
+  {key:'ann',   label:'안내 금액', get:o=>o.announced, r:1},
+  {key:'exp',   label:'기대 수납액',get:o=>o.expected, r:1, title:'조정 인원·1차 잔여 반영'},
+  {key:'paid',  label:'실입금액',  get:o=>o.paid, r:1},
+  {key:'diff',  label:'차액',      get:o=>o.diff, r:1, title:'기대 수납액 − 실입금'},
+  {key:'flags', label:'특이사항',  get:o=>o.flags.length},
+];
+function renderDetailTable(){
+  const list = filteredOrgs().slice();
+  const {key,dir} = state.sort;
+  const col = COLS.find(c=>c.key===key) || COLS[0];
+  list.sort((a,b)=>{
+    const va = col.get(a), vb = col.get(b);
+    const cmp = typeof va === 'string' ? va.localeCompare(vb,'ko') : va-vb;
+    return cmp*dir || (STATUS[a.status].sev - STATUS[b.status].sev);
+  });
+  $('#detailCount').textContent = `${fmt(list.length)}곳 표시 중 (전체 ${fmt(state.result.orgs.length)}곳)`;
+  const t = $('#detailTable'); t.replaceChildren();
+  const thr = el('tr');
+  thr.appendChild(el('th',{text:''}));
+  for (const c of COLS){
+    const th = el('th',{class:'sortable'+(c.r?' r':''), title:c.title||'', onclick:()=>{
+      if (state.sort.key===c.key) state.sort.dir*=-1; else state.sort={key:c.key,dir:1};
+      renderDetailTable();
+    }}, c.label, state.sort.key===c.key ? el('span',{class:'arr',text:state.sort.dir>0?' ▲':' ▼'}) : null);
+    thr.appendChild(th);
+  }
+  t.appendChild(el('thead',null,thr));
+  const tb = el('tbody');
+  for (const o of list) tb.appendChild(orgRow(o));
+  t.appendChild(tb);
+}
+function orgRow(o){
+  const tr = el('tr');
+  const btn = el('button',{class:'expandBtn','aria-label':'상세 보기',text:'▸'});
+  tr.appendChild(el('td',null,btn));
+  tr.appendChild(el('td',null,statusChip(o.status)));
+  tr.appendChild(el('td',{class:'nowrap'},`${o.b.sido.replace(/(특별시|광역시|특별자치도|특별자치시)$/,'')} ${o.b.sgg}`));
+  tr.appendChild(el('td',{class:'orgname'}, o.b.name, el('span',{class:'code',text:o.b.code+(o.b.acctRaw?' · '+o.b.acctRaw:'')})));
+  tr.appendChild(el('td',{class:'num',text:`${fmt(o.b.w0)}+${fmt(o.b.l0)}`}));
+  tr.appendChild(el('td',{class:'num',text:o.sub?`${fmt(o.F1)}+${fmt(o.G1)}`:'–'}));
+  tr.appendChild(el('td',{class:'num',text:fmt(o.announced)}));
+  tr.appendChild(el('td',{class:'num',text:fmt(o.expected)}));
+  tr.appendChild(el('td',{class:'num',text:fmt(o.paid)}));
+  tr.appendChild(el('td',{class:'num'},diffSpan(o.diff)));
+  const fl = el('td');
+  for (const f of o.flags){
+    const sp = el('span',{class:'flag'+(f.hot?' hot':''),text:f.t});
+    if (f.tip) bindTip(sp, ()=>{ const b=el('div'); f.tip.split('\n').forEach(l=>b.appendChild(el('div',{text:l}))); return b; });
+    fl.appendChild(sp);
+  }
+  if (o.explain && (o.status==='est'||o.status==='mism')){
+    const sp = el('span',{class:'flag',text:'추정 근거'});
+    bindTip(sp, ()=>el('div',{text:o.explain.text}));
+    fl.appendChild(sp);
+  }
+  tr.appendChild(fl);
+  let detail = null;
+  btn.addEventListener('click',()=>{
+    if (detail){ detail.remove(); detail=null; btn.textContent='▸'; return; }
+    detail = detailRow(o); tr.after(detail); btn.textContent='▾';
+  });
+  return tr;
+}
+function detailRow(o){
+  const R = o.R;
+  const gridEl = el('div',{class:'detailGrid'});
+  /* 계산 근거 */
+  const calc = el('div',null, el('h4',{text:'계산 근거'}));
+  const lines = [
+    `2차분: 전담 ${fmt(o.F1)}명×${fmt(R.w2)} + 생활지원사 ${fmt(o.G1)}명×${fmt(R.l2)} = ${fmt(o.F1*R.w2+o.G1*R.l2)}원`,
+    `1차 잔여: (전담 ${fmt(o.b.w0)}×${fmt(R.w1)} + 생지 ${fmt(o.b.l0)}×${fmt(R.l1)}) − 납입 ${fmt(o.b.k1)} = ${fmt(o.b.w0*R.w1+o.b.l0*R.l1-o.b.k1)}원`,
+    `기대 수납액 = ${fmt(o.expected)}원 · 안내 금액 = ${fmt(o.announced)}원`,
+    `실입금 ${fmt(o.paid)}원 → 차액 ${o.diff>0?'+':''}${fmt(o.diff)}원`,
+    `1차 납부일: ${fmtDateVal(o.b.d1)||'–'}`,
+  ];
+  if (o.explain) lines.push(`추정: ${o.explain.text}`);
+  calc.appendChild(el('div',{class:'calc'}, ...lines.map(l=>el('div',{text:l}))));
+  gridEl.appendChild(calc);
+  /* 입금 내역 */
+  const depBox = el('div',null, el('h4',{text:`입금 내역 (${o.dlist.length}건)`}));
+  if (o.dlist.length){
+    const tt = el('table',null, el('tr',null, ...['입금일시','입금의뢰인','등록번호','금액',''].map(h=>el('th',{text:h}))));
+    for (const d of o.dlist){
+      tt.appendChild(el('tr',null,
+        el('td',{class:'nowrap',text:d.dt}), el('td',{text:d.payer}), el('td',{text:d.reg}),
+        el('td',{class:'r num',text:fmt(d.amt)}),
+        el('td',null, o.surplus.includes(d)?el('span',{class:'flag hot',text:'잉여'}):null)));
+    }
+    depBox.appendChild(tt);
+  } else depBox.appendChild(el('div',{class:'muted',text:'입금 내역 없음'}));
+  gridEl.appendChild(depBox);
+  /* 제출 확인서 */
+  const subBox = el('div',null, el('h4',{text:'광역 제출 확인서'}));
+  if (o.sub){
+    const s = o.sub;
+    subBox.appendChild(el('div',{class:'calc'},
+      el('div',{text:`인원: 전담 ${fmt(s.w0)} · 생활지원사 ${fmt(s.l0)}`}),
+      el('div',{text:`납부금액(제출값): ${s.paidQ!=null?fmt(s.paidQ)+'원':'–'} · 납부일: ${fmtDateVal(s.paidD)||'–'}`}),
+      el('div',{text:`제출 2차 총계: ${s.o2!=null?fmt(s.o2)+'원':'–'}`}),
+      s.note?el('div',{text:`비고: ${s.note}`}):null));
+  } else subBox.appendChild(el('div',{class:'muted',text:'제출 확인서 없음(미로드 또는 미기재)'}));
+  if (o.b.note) subBox.appendChild(el('div',{class:'calc'},el('div',{text:`안내자료 비고: ${o.b.note}`})));
+  gridEl.appendChild(subBox);
+  return el('tr',{class:'detailRow'}, el('td',{colspan:String(COLS.length+1)}, gridEl));
+}
+
+function renderSurplus(){
+  const rows = state.result.surplusRows;
+  const card = $('#surplusCard');
+  if (!rows.length){ card.classList.add('hidden'); return; }
+  card.classList.remove('hidden');
+  $('#surplusCount').textContent = `${rows.length}건 · 합계 ${fmt(rows.reduce((s,r)=>s+r.d.amt,0))}원`;
+  const t = $('#surplusTable'); t.replaceChildren();
+  t.appendChild(el('thead',null,el('tr',null,...['입금일시','입금 계좌의 배정 기관','입금의뢰인','등록번호','금액','오입금 추정 후보 (미수납액 일치)'].map((h,i)=>el('th',{class:i===4?'r':'',text:h})))));
+  const tb = el('tbody');
+  for (const r of rows){
+    const cand = el('td');
+    if (r.cands && r.cands.length){
+      r.cands.forEach(c=>{
+        cand.appendChild(el('div',null,
+          el('strong',{text:c.b.name}),
+          ` (${c.b.sido} ${c.b.sgg} · ${STATUS[c.status].label} · 미수납 ${fmt(c.expected-c.paid)}원)`));
+      });
+    } else cand.appendChild(el('span',{class:'muted',text:'일치하는 미납 기관 없음'}));
+    tb.appendChild(el('tr',null,
+      el('td',{class:'nowrap',text:r.d.dt}),
+      el('td',null, r.from? el('span',null, r.from.b.name, el('span',{class:'muted',text:` (${r.from.b.sido})`})) : el('span',{class:'flag hot',text:'기준에 없는 계좌'})),
+      el('td',{text:r.d.payer}), el('td',{text:r.d.reg}),
+      el('td',{class:'num',text:fmt(r.d.amt)}),
+      cand));
+  }
+  t.appendChild(tb);
+}
+
+function renderUnmatchedSubs(){
+  const rows = state.result.unmatchedSubs;
+  const card = $('#unmatchedSubCard');
+  if (!rows.length){ card.classList.add('hidden'); return; }
+  card.classList.remove('hidden');
+  const t = $('#unmatchedSubTable'); t.replaceChildren();
+  t.appendChild(el('thead',null,el('tr',null,...['기관코드','시도','기관명','제출 납부금액','비고'].map(h=>el('th',{text:h})))));
+  const tb = el('tbody');
+  for (const s of rows) tb.appendChild(el('tr',null,
+    el('td',{text:s.code}), el('td',{text:s.sido}), el('td',{text:s.name}),
+    el('td',{class:'num',text:s.paidQ!=null?fmt(s.paidQ):'–'}), el('td',{text:s.note})));
+  t.appendChild(tb);
+}
+
+/* ════════════════════════════ 엑셀 내보내기 ════════════════════════════ */
+function exportXlsx(){
+  const r = state.result; if (!r) return;
+  const wb = XLSX.utils.book_new();
+  /* 요약 */
+  const by = new Map();
+  for (const o of r.orgs){
+    if (!by.has(o.b.sido)) by.set(o.b.sido,{시도:o.b.sido,기관수:0,완납:0,조정납부:0,확인필요:0,미납:0,대상아님:0,'기대수납액':0,'실입금액':0,'차액':0});
+    const b = by.get(o.b.sido);
+    b.기관수++; b['기대수납액']+=Math.max(0,o.expected); b['실입금액']+=o.paid; b['차액']=b['기대수납액']-b['실입금액'];
+    if (o.status==='ok') b.완납++; else if(o.status==='okadj') b.조정납부++;
+    else if (NEED_CHECK.includes(o.status)) b.확인필요++;
+    else if (o.status==='unpaid') b.미납++; else b.대상아님++;
+  }
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([...by.values()]), '시도별 요약');
+  /* 기관별 */
+  const orgRows = r.orgs.map(o=>({
+    상태: STATUS[o.status].label, 시도:o.b.sido, 시군구:o.b.sgg, 기관코드:o.b.code, 기관명:o.b.name,
+    가상계좌:o.b.acctRaw, '안내 전담':o.b.w0, '안내 생활지원사':o.b.l0,
+    '제출 전담':o.sub?o.F1:null, '제출 생활지원사':o.sub?o.G1:null,
+    '1차 납입액':o.b.k1, '2차 안내금액':o.announced, '기대 수납액':o.expected,
+    '실입금액':o.paid, '차액':o.diff, '입금건수':o.dlist.length,
+    '입금내역': o.dlist.map(d=>`${d.dt} ${fmt(d.amt)}원(${d.payer})`).join(' / '),
+    '제출 납부금액': o.sub&&o.sub.paidQ!=null?o.sub.paidQ:null,
+    '추정/특이사항': [o.explain?o.explain.text:'', ...o.flags.map(f=>f.t)].filter(Boolean).join(' · '),
+    '비고(제출)': o.sub?o.sub.note:'', '비고(안내)': o.b.note,
+  }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(orgRows), '기관별 결과');
+  const needRows = orgRows.filter(x=>x.상태.startsWith('확인필요')||x.상태==='미납');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(needRows.length?needRows:[{안내:'확인필요·미납 없음'}]), '확인필요·미납');
+  const spRows = r.surplusRows.map(x=>({
+    입금일시:x.d.dt, '계좌 배정 기관':x.from?x.from.b.name:'기준에 없는 계좌', 시도:x.from?x.from.b.sido:'',
+    입금의뢰인:x.d.payer, 등록번호:x.d.reg, 금액:x.d.amt,
+    '오입금 추정 후보':(x.cands||[]).map(c=>`${c.b.name}(${c.b.sido}, 미수납 ${fmt(c.expected-c.paid)}원)`).join(' / ')||'없음',
+  }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(spRows.length?spRows:[{안내:'잉여·미확인 입금 없음'}]), '잉여·미확인 입금');
+  const today = new Date().toISOString().slice(0,10);
+  XLSX.writeFile(wb, `2차교육비_입금대사결과_${today}.xlsx`);
+}
+
+/* 테스트 훅 (자동화 검증용) */
+window.__APP = {
+  state,
+  summary(){
+    if (!state.result) return null;
+    const c = {}; let exp=0, paid=0;
+    for (const o of state.result.orgs){ c[o.status]=(c[o.status]||0)+1; exp+=Math.max(0,o.expected); paid+=o.paid; }
+    return { counts:c, expected:exp, paid, orgs:state.result.orgs.length,
+      deps:state.result.deps.length, surplus:state.result.surplusRows.length,
+      unmatchedSubs:state.result.unmatchedSubs.length };
+  },
+  org(name){ const o = state.result.orgs.find(o=>o.b.name.includes(name)); if(!o) return null;
+    return {status:o.status, expected:o.expected, paid:o.paid, diff:o.diff, explain:o.explain&&o.explain.text, flags:o.flags.map(f=>f.t)}; },
+};
+</script>
+</body>
+</html>

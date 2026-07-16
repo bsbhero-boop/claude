@@ -1,6 +1,8 @@
 node_modules
 dist
 dist-ssr
+# 입금 대사 도구의 단일 파일 산출물은 저장소에 포함 (오프라인 배포용)
+!tools/edu-fee-recon/dist
 *.local
 *.tsbuildinfo
 vite.config.d.ts
