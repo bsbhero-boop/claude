@@ -4,9 +4,9 @@
 # they can look broken. This script renames files/folders to NFC (composed) IN PLACE
 # (no copies). Folders are processed recursively, deepest item first.
 #
-# This file is intentionally PURE ASCII so Korean Windows PowerShell 5.1 cannot
-# mis-decode it, and it is Constrained-Language-Mode safe so it also runs with
-# Smart App Control turned on (uses no New-Object / no [Type]:: references).
+# Compatible with Windows PowerShell 5.1 and Constrained Language Mode (Smart App
+# Control). It uses only file-object properties (.Name/.FullName) and Rename-Item,
+# and avoids Split-Path -LiteralPath -Leaf, which is buggy on PowerShell 5.1.
 #
 # Usage:
 #   - Drag files/folders onto FixNames.bat, or
@@ -15,25 +15,20 @@
 $script:fixed = 0
 $script:skipped = 0
 
-function Rename-One([string]$fullPath) {
-    $name = Split-Path -LiteralPath $fullPath -Leaf
+function Rename-One($item) {
+    $name = $item.Name
     $newName = $name.Normalize()               # no-arg Normalize() = NFC (FormC)
     if ($name -ceq $newName) { return }        # already NFC -> nothing to do
 
-    $parent = Split-Path -LiteralPath $fullPath -Parent
-    $target = Join-Path $parent $newName
-    if (Test-Path -LiteralPath $target) {      # a different file already has that name
-        Write-Host ("SKIP (name exists): " + $name)
-        $script:skipped = $script:skipped + 1
-        return
-    }
     try {
-        Rename-Item -LiteralPath $fullPath -NewName $newName -ErrorAction Stop
+        # Rename-Item never overwrites an existing item, so a real name clash
+        # throws and is caught below (no data is lost).
+        Rename-Item -LiteralPath $item.FullName -NewName $newName -ErrorAction Stop
         Write-Host ("FIXED: " + $name + "  ->  " + $newName)
         $script:fixed = $script:fixed + 1
     }
     catch {
-        Write-Host ("FAILED: " + $name)
+        Write-Host ("SKIP:  " + $name + "  (already exists or locked)")
         $script:skipped = $script:skipped + 1
     }
 }
@@ -50,11 +45,11 @@ function Invoke-Target([string]$path) {
         # separators) so renaming a parent never breaks a child path already handled.
         $children = @(Get-ChildItem -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue)
         $children = $children | Sort-Object { ($_.FullName -split '\\').Count } -Descending
-        foreach ($c in $children) { Rename-One $c.FullName }
-        Rename-One $item.FullName            # finally the top folder itself
+        foreach ($c in $children) { Rename-One $c }
+        Rename-One $item                       # finally the top folder itself
     }
     else {
-        Rename-One $item.FullName
+        Rename-One $item
     }
 }
 

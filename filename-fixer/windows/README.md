@@ -70,7 +70,7 @@ powershell -ExecutionPolicy Bypass -File FixNames.ps1 "C:\a\파일1.txt" "C:\b\�
 3. 아래 **한 줄**을 붙여넣고 Enter:
 
 ```powershell
-Get-ChildItem -Recurse -Force | Sort-Object {($_.FullName -split '\\').Count} -Descending | ForEach-Object { $n = $_.Name.Normalize(); if ($_.Name -cne $n) { $t = Join-Path (Split-Path -LiteralPath $_.FullName -Parent) $n; if (-not (Test-Path -LiteralPath $t)) { Rename-Item -LiteralPath $_.FullName -NewName $n; Write-Host ("FIXED: " + $_.Name + " -> " + $n) } } }; Write-Host "Done."
+Get-ChildItem -Recurse -Force | Sort-Object {($_.FullName -split '\\').Count} -Descending | ForEach-Object { $o = $_.Name; $n = $o.Normalize(); if ($o -cne $n) { try { Rename-Item -LiteralPath $_.FullName -NewName $n -ErrorAction Stop; Write-Host ("FIXED: " + $o + " -> " + $n) } catch { Write-Host ("SKIP: " + $o) } } }; Write-Host "Done."
 ```
 
 각 파일이 `FIXED: 옛이름 -> 새이름` 으로 표시되고 마지막에 `Done.` 이 나오면 됩니다.
