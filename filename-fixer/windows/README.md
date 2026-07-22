@@ -70,11 +70,13 @@ powershell -ExecutionPolicy Bypass -File FixNames.ps1 "C:\a\파일1.txt" "C:\b\�
 3. 아래 **한 줄**을 붙여넣고 Enter:
 
 ```powershell
-Get-ChildItem -Recurse -Force | Sort-Object {($_.FullName -split '\\').Count} -Descending | ForEach-Object { $n = $_.Name.Normalize(); if ($_.Name -cne $n) { $t = Join-Path (Split-Path -LiteralPath $_.FullName -Parent) $n; if (-not (Test-Path -LiteralPath $t)) { Rename-Item -LiteralPath $_.FullName -NewName $n; Write-Host ("고침: " + $_.Name + "  ->  " + $n) } else { Write-Host ("건너뜀(이미 존재): " + $_.Name) } } }; Write-Host "완료"
+Get-ChildItem -Recurse -Force | Sort-Object {($_.FullName -split '\\').Count} -Descending | ForEach-Object { $n = $_.Name.Normalize(); if ($_.Name -cne $n) { $t = Join-Path (Split-Path -LiteralPath $_.FullName -Parent) $n; if (-not (Test-Path -LiteralPath $t)) { Rename-Item -LiteralPath $_.FullName -NewName $n; Write-Host ("FIXED: " + $_.Name + " -> " + $n) } } }; Write-Host "Done."
 ```
 
-각 파일이 `고침: ... -> ...` 로 표시되고 마지막에 `완료` 가 나오면 됩니다.
+각 파일이 `FIXED: 옛이름 -> 새이름` 으로 표시되고 마지막에 `Done.` 이 나오면 됩니다.
 이 명령은 **현재 폴더 안의 모든 파일·하위 폴더** 이름을 NFC로 바꿉니다.
+(메시지를 영어로 둔 이유: 한국어 윈도우의 PowerShell 콘솔에서 한글이 깨지지
+않도록 하기 위함입니다. 이름 변경 기능 자체는 동일합니다.)
 
 > 스마트 앱 컨트롤 자체를 끄면 원래 `.bat` 방식도 동작하지만, **한 번 끄면 다시
 > 켜려면 윈도우를 재설치**해야 하므로 이 한 가지 작업을 위해 끄는 것은 권장하지 않습니다.
