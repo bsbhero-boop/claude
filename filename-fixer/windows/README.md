@@ -57,6 +57,30 @@ powershell -ExecutionPolicy Bypass -File FixNames.ps1 "C:\a\파일1.txt" "C:\b\�
   `.bat` 이 `chcp 65001`(UTF-8)로 콘솔을 설정합니다. 그래도 깨지면 콘솔 글꼴을
   "굴림체"나 한글 지원 글꼴로 바꿔 보세요. (이름 변경 자체는 정상 동작합니다.)
 
+## ★ 스마트 앱 컨트롤(Smart App Control)이 .bat 을 차단하는 경우
+
+윈도우 11의 **스마트 앱 컨트롤**이 켜져 있으면 서명되지 않은 `.bat`/스크립트는
+아예 실행이 차단되고, 파일 하나만 예외로 "허용"할 수도 없습니다. 이때는 파일을
+실행하는 대신, **신뢰된 PowerShell 창에 명령을 붙여넣어** 처리하세요. (SAC는 파일
+실행을 막을 뿐, 신뢰된 PowerShell에 직접 입력한 명령은 막지 않습니다.)
+
+1. 깨진 파일들을 **새 폴더 하나**에 모읍니다. (예: 바탕화면에 `고칠파일` 폴더)
+2. 그 폴더 안 빈 공간에서 **Shift + 우클릭 → "PowerShell 창 열기"** 또는
+   **우클릭 → "터미널에서 열기"**. (또는 파일 탐색기 주소창에 `powershell` 입력 후 Enter)
+3. 아래 **한 줄**을 붙여넣고 Enter:
+
+```powershell
+Get-ChildItem -Recurse -Force | Sort-Object {($_.FullName -split '\\').Count} -Descending | ForEach-Object { $n = $_.Name.Normalize(); if ($_.Name -cne $n) { $t = Join-Path (Split-Path -LiteralPath $_.FullName -Parent) $n; if (-not (Test-Path -LiteralPath $t)) { Rename-Item -LiteralPath $_.FullName -NewName $n; Write-Host ("고침: " + $_.Name + "  ->  " + $n) } else { Write-Host ("건너뜀(이미 존재): " + $_.Name) } } }; Write-Host "완료"
+```
+
+각 파일이 `고침: ... -> ...` 로 표시되고 마지막에 `완료` 가 나오면 됩니다.
+이 명령은 **현재 폴더 안의 모든 파일·하위 폴더** 이름을 NFC로 바꿉니다.
+
+> 스마트 앱 컨트롤 자체를 끄면 원래 `.bat` 방식도 동작하지만, **한 번 끄면 다시
+> 켜려면 윈도우를 재설치**해야 하므로 이 한 가지 작업을 위해 끄는 것은 권장하지 않습니다.
+> (SAC 하에서는 PowerShell이 제한 언어 모드로 동작하므로, 위 명령은 그 모드에서도
+> 되도록 인수 없는 `.Normalize()`(기본값 NFC)와 기본 명령어만 사용합니다.)
+
 ## 파일 구성
 
 ```
