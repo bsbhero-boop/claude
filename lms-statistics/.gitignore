@@ -1,0 +1,8 @@
+# 개인정보가 포함된 산출물은 절대 커밋하지 않습니다
+*.xlsx
+*.xls
+*.csv
+진단_*.json
+LMS통계_설정_*.json
+
+node_modules/
