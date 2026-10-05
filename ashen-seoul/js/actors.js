@@ -3,7 +3,7 @@
 
 const RUN = 112;
 const GROUND = new Set(['stand', 'turn', 'startrun', 'run', 'stoprun', 'runturn', 'step', 'teeter', 'crouch', 'standup',
-  'land', 'hardland', 'drink', 'pickup', 'draw', 'engarde', 'advance', 'retreat', 'strike', 'parry', 'hurt', 'bounce', 'sheathe', 'bump', 'standjump', 'runjump', 'jumpup', 'hop', 'idle', 'cheer']);
+  'land', 'hardland', 'drink', 'pickup', 'shamble', 'claw', 'draw', 'engarde', 'advance', 'retreat', 'strike', 'parry', 'hurt', 'bounce', 'sheathe', 'bump', 'standjump', 'runjump', 'jumpup', 'hop', 'idle', 'cheer']);
 const RUNNING = new Set(['startrun', 'run', 'stoprun', 'runturn', 'runjump', 'bump']);
 const COMBAT = new Set(['draw', 'engarde', 'advance', 'retreat', 'strike', 'parry', 'hurt', 'bounce']);
 
@@ -128,6 +128,7 @@ class Actor {
     if (kind === 'spikes') { this.set('dead', null); if (st) st.blood = true; world.blood(this.x, this.y - 10, this.f); }
     else if (kind === 'sliced') { this.set('dead', 'die'); if (st) st.blood = true; world.blood(this.x, this.y - 26, this.f); }
     else if (kind === 'fall') { this.set('gone'); }
+    else if (kind === 'shock') { this.set('dead', 'die'); if (st) st.blood = true; this.flash = 0.8; Sfx.play('zap'); }
     else this.set('dead', 'die');
     if (this.isPlayer) Sfx.play('death');
   }
@@ -148,6 +149,7 @@ class Actor {
       world.trigLoose(c, r);
       const st = world.state(c, r);
       if (st && st.kind === 'spikes' && st.out > 0.4 && RUNNING.has(this.state)) this.die(world, 'spikes', st);
+      if (st && st.kind === 'electric' && st.on && this.alive) this.die(world, 'shock', st);
     }
     for (const cc of [c]) {
       const st = world.state(cc, r);
@@ -213,7 +215,7 @@ class Actor {
 
 class Player extends Actor {
   constructor(x, y, f) {
-    super(x, y, f, 'prince');
+    super(x, y, f, 'survivor');
     this.isPlayer = true;
     this.hp = this.maxHp = 3;
   }
@@ -350,14 +352,14 @@ class Player extends Actor {
       case 'drink':
         if (this.t >= 0.3 && this.once('take')) { this.item.taken = true; }
         if (this.t >= 0.8 && this.once('fx')) {
-          if (this.item.big) { this.maxHp = Math.min(10, this.maxHp + 1); this.hp = this.maxHp; Sfx.play('life'); game.message('생명의 물약! 최대 체력이 늘었다'); }
-          else { this.hp = Math.min(this.maxHp, this.hp + 1); Sfx.play('drink'); }
+          if (this.item.big) { this.maxHp = Math.min(10, this.maxHp + 1); this.hp = this.maxHp; Sfx.play('life'); game.message('혈청을 맞았다! 최대 체력이 늘었다'); }
+          else { this.hp = Math.min(this.maxHp, this.hp + 1); Sfx.play('drink'); game.message('응급 처치 — 체력 1 회복', 2); }
         }
         if (this.t >= 1.3) this.set('stand');
         break;
       case 'pickup':
         if (this.t >= 0.32 && this.once('take')) { this.item.taken = true; this.hasSword = true; Sfx.play('sword'); }
-        if (this.t >= 1.2) { this.set('stand'); game.message('칼을 얻었다! 경비병과 싸울 수 있다'); }
+        if (this.t >= 1.2) { this.set('stand'); game.message('쇠파이프를 얻었다! 이제 맞서 싸울 수 있다'); }
         break;
       case 'land': if (this.t >= 0.26) this.set('stand'); break;
       case 'hardland': if (this.t >= 0.8) this.set('stand'); break;
@@ -429,7 +431,7 @@ class Player extends Actor {
   useItem(world) {
     const c = colOf(this.x), st = world.state(c, this.row);
     if (!st || st.taken) return false;
-    if (st.kind === 'potion') { this.item = st; this.set('drink', 'drink'); return true; }
+    if (st.kind === 'potion') { this.item = st; this.set('drink', 'heal'); return true; }
     if (st.kind === 'sword') { this.item = st; this.set('pickup', 'pickup'); return true; }
     return false;
   }
