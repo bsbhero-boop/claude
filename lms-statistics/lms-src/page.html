@@ -9,7 +9,7 @@
 <body>
 <header class="top">
   <div class="wrap">
-    <h1>배움터 직무교육 통계 대시보드 <span class="vertag" id="verTag">ver10</span></h1>
+    <h1>배움터 직무교육 통계 대시보드 <span class="vertag" id="verTag">ver11</span></h1>
     <div class="sub">노인맞춤돌봄서비스 종사자 직무교육 · 원데이터 업로드 → 자동 집계 (모든 처리는 브라우저 로컬에서만 수행, 외부 전송 없음)</div>
     <div class="statusbar" id="statusbar"></div>
   </div>
@@ -19,12 +19,16 @@
   <div class="uploads">
     <div class="drop" id="dropMember">
       <h3>① 회원정보</h3>
-      <p>ID·직군·신규/경력·교육대상여부가 담긴 회원정보 엑셀. 한 번 올리면 저장되어 다음엔 갱신 시에만 올리면 됩니다.</p>
+      <p>배움터에서 받은 <b>최신 회원명단</b>을 올립니다. 저장되므로 새 명단을 받았을 때만 다시 올리면 됩니다.
+        퇴사자(최신 명단에서 빠진 사람)를 구분하려면 과거 명단이나 직접 합친 전체 명단을 <b>이전 명단</b>으로 한 번 올려 두세요.</p>
       <div class="row">
-        <button class="btn" id="btnMember">파일 선택</button>
-        <span class="hint">.xlsx / .xls / .csv · 여기로 끌어다 놓기 가능</span>
+        <button class="btn" id="btnMember">최신 명단 올리기</button>
+        <button class="btn sec" id="btnMemberOld">이전 명단 추가</button>
+        <span class="hint">.xlsx / .xls / .csv · 끌어다 놓으면 최신 명단으로 올라갑니다</span>
       </div>
+      <div class="rosterline" id="rosterLine"></div>
       <input type="file" id="fileMember" accept=".xlsx,.xls,.csv" multiple style="display:none">
+      <input type="file" id="fileMemberOld" accept=".xlsx,.xls,.csv" multiple style="display:none">
     </div>
     <div class="drop" id="dropStudent">
       <h3>② 수강생목록 (원데이터)</h3>

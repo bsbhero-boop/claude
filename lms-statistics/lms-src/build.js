@@ -8,8 +8,8 @@ const path = require('path');
 
 const SRC = __dirname;
 const ROOT = path.resolve(SRC, '..');
-const VERSION = 'ver10';
-const OUT = path.join(ROOT, 'lms-statistics-v10.html');
+const VERSION = 'ver11';
+const OUT = path.join(ROOT, 'lms-statistics-v11.html');
 
 function read(p) { return fs.readFileSync(path.join(SRC, p), 'utf8'); }
 

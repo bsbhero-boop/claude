@@ -356,13 +356,203 @@ const tab = (page, label) => page.evaluate(l => {
   const rtCfg = await page.evaluate(() => window.__LMS_APP.config.roundTable);
   ok('이수 기준 초기화해도 지정 차수 보존', !!rtCfg && rtCfg.mode === 'split' && (rtCfg.경력자 || []).join(',') === '15,16,17,18,19,20,21', JSON.stringify(rtCfg));
 
+  /* ── F-14 이수율 현황표 산출기간 — 차수 선택 (ver11) ─────────────── */
+  group('F-14  이수율 현황표 산출기간(차수 기준) — 차수 선택');
+  // 위 F-12에서 ver10 형식({from:'7', to:'9'})으로 넣어 둔 산출기간이 새 형식으로 옮겨졌는가
+  await tab(page, '요약'); await page.waitForTimeout(400);
+  const per0 = await page.evaluate(() => window.__LMS_APP.config.period);
+  ok('ver10 저장값(7~9차)이 차수 목록으로 이전', per0.mode === 'round' && per0.pick && (per0.pick.same || []).join(',') === '7,8,9' && !per0.from && !per0.to, JSON.stringify(per0));
+  const readRate = () => page.evaluate(() => {
+    const c = document.getElementById('rateTableCard'), num = td => +td.textContent.replace(/,/g, '');
+    const trs = [...c.querySelectorAll('table tbody tr')];
+    return {
+      전담: [num(trs[0].children[1]), num(trs[0].children[2])], 생활: [num(trs[1].children[1]), num(trs[1].children[2])], 총계: num(trs[2].children[3]),
+      inputs: [...c.querySelectorAll('input[data-scope]')].map(i => i.dataset.scope + '=' + i.value),
+      note: c.querySelector('.note.info').textContent.replace(/\s+/g, ' ')
+    };
+  });
+  const setRate = (scope, v) => page.evaluate(([s, v]) => {
+    const i = document.querySelector('#rateTableCard input[data-scope="' + s + '"]'); i.value = v;
+    [...i.parentNode.querySelectorAll('button')].find(b => b.textContent === '적용').click();
+  }, [scope, v]);
+  let rr = await readRate();
+  ok('차수 기준이면 차수 선택기가 나타남', rr.inputs.join() === 'same=7~9', rr.inputs.join());
+  ok('7~9차: 전담 신규2 · 생활 신규4 경력1', rr.전담.join() === '2,0' && rr.생활.join() === '4,1', JSON.stringify(rr));
+  await setRate('same', '7-9, 15-21'); await page.waitForTimeout(300);
+  rr = await readRate();
+  ok('띄엄띄엄 지정(7~9, 15~21)', rr.전담.join() === '2,1' && rr.생활.join() === '4,2' && rr.총계 === 9, JSON.stringify(rr));
+  ok('산출기간 표기', /7~9, 15~21차 \(차수 기준\)/.test(rr.note), rr.note.slice(0, 120));
+  await page.evaluate(() => { const s = document.querySelector('#rateTableCard .rpicker select'); s.value = 'split'; s.dispatchEvent(new Event('change')); });
+  await page.waitForTimeout(300);
+  await setRate('신규자', '7-9'); await page.waitForTimeout(250);
+  await setRate('경력자', '15-21'); await page.waitForTimeout(300);
+  rr = await readRate();
+  ok('신규자·경력자 따로(신규 7~9 · 경력 15~21): 경력 7차 제외', rr.전담.join() === '2,1' && rr.생활.join() === '4,1' && rr.총계 === 8, JSON.stringify(rr));
+  const crossRT = await page.evaluate(() => {
+    const t = LMS.roundTable(window.__LMS_APP.result.byRound, { 신규자: [7, 8, 9], 경력자: [15, 16, 17, 18, 19, 20, 21] }).total;
+    return [t['신규자|전담사회복지사'], t['경력자|전담사회복지사'], t['신규자|생활지원사'], t['경력자|생활지원사']].join();
+  });
+  ok('차수별 이수현황표(같은 지정)와 숫자 일치', crossRT === rr.전담.concat(rr.생활).join(), crossRT + ' vs ' + rr.전담.concat(rr.생활).join());
+  await page.evaluate(() => document.querySelector('#rateTableCard .rchip[data-round="9"]').click()); await page.waitForTimeout(300);
+  rr = await readRate();
+  ok('번호 버튼으로 9차 빼기 → 신규 생활3 · 전담0', rr.전담.join() === '0,1' && rr.생활.join() === '3,1', JSON.stringify(rr));
+  ok('이수율 현황표 지정은 차수별 이수현황표와 따로 저장', await page.evaluate(() => { const c = window.__LMS_APP.config; return c.period.pick.신규자.join() === '7,8' && c.roundTable.신규자.join() === '7,8,9'; }));
+  await page.evaluate(() => {
+    const o = XLSX.writeFile;
+    XLSX.writeFile = function (wb, fn) { const ws = wb.Sheets[wb.SheetNames[0]]; window.__lastX = { fn: fn, aoa: XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' }) }; return o.apply(XLSX, arguments); };
+  });
+  const dlRate = page.waitForEvent('download');
+  await page.evaluate(() => [...document.querySelectorAll('#rateTableCard .head button')].find(b => b.textContent === '엑셀 다운로드').click());
+  await dlRate;
+  const XR = await page.evaluate(() => window.__lastX);
+  ok('엑셀 머리말에 지정 차수', XR.fn === '이수율_현황표.xlsx' && XR.aoa[1][0] === '산출기간: 신규자 7~8차 · 경력자 15~21차 (차수 기준)', XR.aoa[1][0]);
+  await page.evaluate(() => { const s = [...document.querySelectorAll('#rateTableCard select')][0]; s.value = 'all'; s.dispatchEvent(new Event('change')); });
+  await page.waitForTimeout(300);
+  await page.evaluate(() => { const s = [...document.querySelectorAll('#rateTableCard select')][0]; s.value = 'round'; s.dispatchEvent(new Event('change')); });
+  await page.waitForTimeout(300);
+  rr = await readRate();
+  ok('전체로 바꿨다 돌아와도 지정 유지', rr.inputs.join() === '신규자=7~8,경력자=15~21', rr.inputs.join());
+
+  /* ── F-13 회원 명단 구성: 최신 명단 + 퇴사자 (ver11) ───────────────── */
+  group('F-13  최신 명단 + 이전 명단 → 퇴사자 구분');
+  const MR = (id, ut, gb) => [0, '서울', '강남구', '역삼동', 'O1', '기관A', '사람' + id, id, ut, '', '', '', '', '', '', 'N', 'Y', gb, '정상'];
+  const P13 = { S1: ['생활지원사', '신규자'], S2: ['생활지원사', '경력자'], S3: ['전담사회복지사', '신규자'], S4: ['생활지원사', '신규자'], Q1: ['생활지원사', '신규자'], Q2: ['전담사회복지사', '경력자'], N1: ['생활지원사', '신규자'], S5: ['생활지원사', '신규자'], Q3: ['생활지원사', '신규자'] };
+  const roster = ids => csv(MH, ids.map((id, i) => { const r = MR(id, P13[id][0], P13[id][1]); r[0] = i + 1; return r; }));
+  const stu13 = csv(SH, [
+    pr('S1', '생활지원사', NP + '생활지원사', 7),
+    pr('S2', '생활지원사', KP + '생활지원사', 15), sr('S2', '생활지원사', NA), sr('S2', '생활지원사', MO), sr('S2', '생활지원사', BO),
+    pr('S4', '생활지원사', NP + '생활지원사', 8),
+    pr('Q1', '생활지원사', NP + '생활지원사', 7),
+    pr('Q2', '전담사회복지사', KP + '전담사회복지사', 15),
+    pr('X9', '생활지원사', NP + '생활지원사', 7)
+  ]);
+  const kp13 = () => page.evaluate(() => { const k = window.__LMS_APP.result.kpi; return [k.대상자, k.이수자, k.퇴사대상자, k.퇴사이수자, k.회원정보없는ID수].join(); });
+  // 깨끗한 상태에서 시작
+  await tab(page, '설정'); await page.waitForTimeout(300);
+  await page.evaluate(() => { [...document.querySelectorAll('#content .btn')].find(b => b.textContent === '저장된 회원정보 삭제').click(); });
+  await page.waitForFunction(() => !window.__LMS_APP.members);
+  await page.evaluate(() => { [...document.querySelectorAll('#content .btn')].find(b => b.textContent === '수강데이터 비우기').click(); });
+  await page.waitForFunction(() => window.__LMS_APP.studentCount === 0);
+  ok('최신 명단 전에는 이전 명단 추가 버튼 비활성', await page.evaluate(() => document.getElementById('btnMemberOld').disabled));
+  await page.evaluate(() => { window.__LMS_APP.config.roundTable = { mode: 'same', same: null, 신규자: null, 경력자: null }; });   // F-12 의 지정값과 무관하게
+  dialogs.length = 0;
+  await upload(page, 'fileMember', '회원명단_20261001.csv', roster(['S1', 'S2', 'S3', 'S4', 'N1']));
+  await page.waitForFunction(() => window.__LMS_APP.memberMeta && window.__LMS_APP.memberMeta.기준일 === '2026-10-01');
+  await upload(page, 'fileStudent', 's13.csv', stu13);
+  await page.waitForFunction(() => window.__LMS_APP.result && window.__LMS_APP.studentCount === 9);
+  ok('파일명에서 기준일 인식(2026-10-01)', true);
+  ok('이전 명단 없으면 퇴사자 0, 퇴사자 수강기록은 제외됨', (await kp13()) === '5,3,0,0,3', await kp13());
+  // 사용자가 지금 쓰는 방식: 직접 합친 전체 명단을 이전 명단으로
+  ok('최신 명단을 올리면 이전 명단 추가 버튼 활성', await page.evaluate(() => document.getElementById('btnMemberOld').disabled === false));
+  await upload(page, 'fileMemberOld', '합친명단_20260915.csv', roster(['S1', 'S2', 'S3', 'S4', 'Q1', 'Q2']));
+  await page.waitForFunction(() => window.__LMS_APP.result && window.__LMS_APP.formerPool.length === 2 && window.__LMS_APP.result.kpi.퇴사자 === 2);
+  ok('합친 명단에서 최신 명단에 없는 Q1·Q2만 퇴사자', (await page.evaluate(() => window.__LMS_APP.formerPool.map(r => r.ID).sort().join())) === 'Q1,Q2');
+  ok('반영 결과 알림', dialogs.some(d => /이전 명단 1개를 반영/.test(d)), dialogs.join(' / '));
+  ok('현원 기준 KPI: 대상 5 · 이수 3 / 퇴사 대상 2 · 이수 1 / 회원정보 없는 ID는 X9만', (await kp13()) === '5,3,2,1,1', await kp13());
+  await tab(page, '요약'); await page.waitForTimeout(400);
+  const sum13 = await page.evaluate(() => ({
+    segs: [...document.querySelectorAll('.basisbar .seg')].map(b => b.textContent + (b.classList.contains('on') ? '*' : '')).join('|'),
+    kpis: [...document.querySelectorAll('.kpis .kpi .lab')].map(x => x.textContent).join('|'),
+    status: document.getElementById('statusbar').textContent.replace(/\s+/g, ' '),
+    line: document.getElementById('rosterLine').textContent.replace(/\s+/g, ' ')
+  }));
+  ok('요약에 집계 대상 선택(현원 기본)', sum13.segs === '현원(최신 명단)*|현원 + 퇴사자', sum13.segs);
+  ok('KPI에 (현원) 표기와 퇴사자 카드', /교육대상자\(현원\)/.test(sum13.kpis) && /퇴사자\(명단 제외\)/.test(sum13.kpis), sum13.kpis);
+  ok('상태바·업로드 영역에 퇴사자 수', /퇴사자 2명/.test(sum13.status) && /최신 명단 2026-10-01 · 5명 · 퇴사자 2명/.test(sum13.line), sum13.line);
+  rt = await readRT();
+  ok('차수별 이수현황표(현원): 7차 신규생활 1 + 퇴사자 안내', rt.rows[0] === '7차|1|0|0|0|1' && /퇴사자 1명/.test(rt.notes), rt.rows[0] + ' / ' + rt.notes.slice(0, 200));
+  await page.evaluate(() => [...document.querySelectorAll('.basisbar .seg')].find(b => b.dataset.basis === 'all').click());
+  await page.waitForFunction(() => window.__LMS_APP.result && window.__LMS_APP.result.kpi.집계기준 === 'all');
+  await page.waitForTimeout(300);
+  ok('현원+퇴사자 기준 KPI: 대상 7 · 이수 4', (await kp13()) === '7,4,2,1,1', await kp13());
+  rt = await readRT();
+  ok('차수별 이수현황표(포함): 7차 신규생활 2 + "합계 중 퇴사자"', rt.rows[0] === '7차|2|0|0|0|2' && /합계 중 퇴사자 1명/.test(rt.notes), rt.rows[0]);
+  await page.evaluate(() => [...document.querySelectorAll('.basisbar .seg')].find(b => b.dataset.basis === 'current').click());
+  await page.waitForFunction(() => window.__LMS_APP.result && window.__LMS_APP.result.kpi.집계기준 === 'current');
+
+  group('F-13  명단·데이터 점검 화면');
+  await tab(page, '이수자·미이수자'); await page.waitForTimeout(500);
+  const lst = await page.evaluate(() => ({
+    cols: [...document.querySelectorAll('#content table th')].map(t => t.textContent.replace(/[▾▴]/g, '').trim()),
+    sel: [...document.querySelectorAll('#content select')][0].value,
+    n: document.querySelectorAll('#content tbody tr').length
+  }));
+  ok('명단에 재직구분·명단 최종확인 열, 기본은 재직자만', lst.cols.indexOf('재직구분') >= 0 && lst.cols.indexOf('명단 최종확인') >= 0 && lst.sel === '재직', JSON.stringify(lst));
+  await page.evaluate(() => { const s = [...document.querySelectorAll('#content select')][0]; s.value = '퇴사'; s.dispatchEvent(new Event('change')); const t = [...document.querySelectorAll('#content select')][1]; t.value = ''; t.dispatchEvent(new Event('change')); });
+  await page.waitForTimeout(300);
+  const fl = await page.evaluate(() => [...document.querySelectorAll('#content tbody tr')].map(tr => tr.children[5].textContent + ':' + tr.children[14].textContent + ':' + tr.children[15].textContent).join(' / '));
+  ok('퇴사자만 보기 → Q1·Q2, 최종확인 = 이전 명단 기준일', fl === 'Q1:퇴사:2026-09-15 / Q2:퇴사:2026-09-15', fl);
+  await tab(page, '데이터 점검'); await page.waitForTimeout(500);
+  const chk = await page.evaluate(() => {
+    const c = document.getElementById('rosterCard');
+    return {
+      steps: [...c.querySelectorAll('#stepsTable tbody tr')].map(tr => [...tr.children].map(td => td.textContent.trim()).join('|')),
+      date: document.getElementById('rosterDateInput').value,
+      hist: [...c.querySelectorAll('table')][0].querySelectorAll('tbody tr').length
+    };
+  });
+  ok('명단 구성 카드: 기준일·이력', chk.date === '2026-10-01' && chk.hist === 1, JSON.stringify(chk));
+  ok('대상자 산출 내역(현원 5 → 5 / 퇴사 2 → 2)', chk.steps[0] === '명단 인원|5||2|' && /^이수기준 직군·교육구분.*\|5\|0\|2\|0$/.test(chk.steps[chk.steps.length - 1]), chk.steps.join(' / '));
+
+  group('F-13  다음 달 최신 명단 → 자동 보관 · 같은 날 명단 · 이전 날짜 명단');
+  dialogs.length = 0;
+  await upload(page, 'fileMember', '회원명단_20261101.csv', roster(['S1', 'S2', 'S3', 'N1']));   // S4 퇴사
+  await page.waitForFunction(() => window.__LMS_APP.memberMeta.기준일 === '2026-11-01' && window.__LMS_APP.formerPool.length === 3);
+  ok('직전 명단에서 빠진 S4가 퇴사자로 자동 보관', (await page.evaluate(() => { const r = window.__LMS_APP.formerPool.find(x => x.ID === 'S4'); return r && r.최종확인; })) === '2026-10-01');
+  ok('자동 보관 알림', dialogs.some(d => /최신 명단을 반영했습니다/.test(d)), dialogs.join(' / '));
+  await page.waitForFunction(() => window.__LMS_APP.result && window.__LMS_APP.result.kpi.퇴사대상자 === 3);
+  ok('현원 대상 4 · 이수 2 / 퇴사 대상 3 · 이수 2', (await kp13()) === '4,2,3,2,1', await kp13());
+  dialogs.length = 0;
+  await upload(page, 'fileMember', '회원명단_20261101_수정.csv', roster(['S1', 'S2', 'S3', 'N1', 'S5']));
+  await page.waitForFunction(() => window.__LMS_APP.memberMeta.count === 5);
+  await page.waitForTimeout(300);
+  ok('같은 날 명단은 교체만(퇴사자 그대로 3)', (await page.evaluate(() => window.__LMS_APP.formerPool.length)) === 3 && dialogs.some(d => /최신 명단을 교체했습니다/.test(d)), dialogs.join(' / '));
+  dialogs.length = 0;
+  await upload(page, 'fileMember', '회원명단_20260801.csv', roster(['S1', 'Q3']));               // 더 이전 날짜 → 확인 후 이전 명단으로
+  await page.waitForFunction(() => window.__LMS_APP.formerPool.length === 4);
+  ok('더 이전 날짜 명단은 확인 후 이전 명단으로(최신 유지)', (await page.evaluate(() => [window.__LMS_APP.memberMeta.기준일, window.__LMS_APP.memberMeta.count].join())) === '2026-11-01,5' && /기준일\(2026-08-01\)이 지금 최신 명단/.test(dialogs[0] || ''), dialogs.join(' / '));
+  dialogs.length = 0;
+  await upload(page, 'fileMember', '회원명단_20261201.csv', roster(['S1', 'S2', 'S3', 'N1', 'S5', 'Q2']));   // Q2 복귀
+  await page.waitForFunction(() => window.__LMS_APP.memberMeta.기준일 === '2026-12-01');
+  await page.waitForTimeout(300);
+  ok('퇴사자였던 Q2가 다시 나타나면 재직으로 복귀', (await page.evaluate(() => window.__LMS_APP.formerPool.map(r => r.ID).sort().join())) === 'Q1,Q3,S4' && dialogs.some(d => /최신 명단을 반영했습니다/.test(d)), await page.evaluate(() => window.__LMS_APP.formerPool.map(r => r.ID).sort().join()));
+
+  group('F-13  저장 · 이전 버전 저장분 이전');
+  await page.reload();
+  await page.waitForFunction(() => window.__LMS_APP && window.__LMS_APP.members && window.__LMS_APP.formerPool.length === 3);
+  ok('새로고침 후 최신 명단·퇴사자·이력 복원', (await page.evaluate(() => [window.__LMS_APP.memberMeta.기준일, window.__LMS_APP.formerPool.length, window.__LMS_APP.formerHistory.length].join())) === '2026-12-01,3,4');
+  // ver10에서 저장된 '직접 합친 명단'(기준일 없음)을 흉내 낸다
+  await page.evaluate(async rows => {
+    const put = (k, v) => new Promise(r => { const q = indexedDB.open('lms-stats', 1); q.onsuccess = () => { const tx = q.result.transaction('kv', 'readwrite'); tx.objectStore('kv').put(v, k); tx.oncomplete = () => r(); }; });
+    await put('members', rows); await put('memberMeta', { count: rows.length, filename: '합친명단.xlsx', loadedAt: '2026-09-20T00:00:00.000Z', dupRemoved: 0 });
+    await put('formerPool', []); await put('formerHistory', []);
+  }, ['S1', 'S2', 'S3', 'S4', 'Q1', 'Q2', 'N1'].map(id => ({ ID: id, 성명: '사람' + id, 시도: '서울', 시군구: '강남구', 기관코드: 'O1', 기관명: '기관A', 사용자유형: P13[id][0], 교육구분: P13[id][1], 교육대상여부: 'Y', 상태: '정상', 선임여부: 'N' })));
+  await page.reload();
+  await page.waitForFunction(() => window.__LMS_APP && window.__LMS_APP.members && window.__LMS_APP.members.length === 7);
+  await upload(page, 'fileStudent', 's13.csv', stu13);
+  await page.waitForFunction(() => window.__LMS_APP.result && window.__LMS_APP.studentCount === 9);
+  await tab(page, '요약'); await page.waitForTimeout(400);
+  const lg = await page.evaluate(() => ({ legacy: window.__LMS_APP.memberMeta.legacy, note: [...document.querySelectorAll('#content .note')].map(n => n.textContent).join(' ') }));
+  ok('이전 버전 저장분은 기준일 미상으로 표시하고 안내', lg.legacy === true && /퇴사자 구분 기능/.test(lg.note));
+  dialogs.length = 0;
+  await upload(page, 'fileMember', 'export.csv', roster(['S1', 'S2', 'S3', 'S4', 'N1']));       // 파일명에 날짜 없음 → 수정일
+  await page.waitForFunction(() => !window.__LMS_APP.memberMeta.legacy && window.__LMS_APP.formerPool.length === 2);
+  ok('최신 명단을 올리면 저장돼 있던 합친 명단에서 Q1·Q2를 퇴사자로 자동 분류', (await page.evaluate(() => window.__LMS_APP.formerPool.map(r => r.ID + ':' + (r.최종확인 || '미상')).sort().join())) === 'Q1:미상,Q2:미상' && dialogs.some(d => /최신 명단을 반영했습니다/.test(d)), dialogs.join(' / '));
+  await page.waitForFunction(() => window.__LMS_APP.result && window.__LMS_APP.result.kpi.퇴사자 === 2);
+  ok('이전 후 현원 KPI(대상 5 · 이수 3)', (await kp13()) === '5,3,2,1,1', await kp13());
+  // 정리: 다음 검증(D-15)이 빈 상태에서 시작하도록
+  await tab(page, '설정'); await page.waitForTimeout(300);
+  await page.evaluate(() => { [...document.querySelectorAll('#content .btn')].find(b => b.textContent === '저장된 회원정보 삭제').click(); });
+  await page.waitForFunction(() => !window.__LMS_APP.members && window.__LMS_APP.formerPool.length === 0);
+  ok('회원정보 삭제 시 이전 명단(퇴사자)도 함께 삭제', true);
+
   group('D-15  원데이터 HTML 주입 방어');
   const memX = csv(MH, [[1, '서울', '강남구', '동', 'O1', '<img src=x onerror="window.__X1=1">', '<img src=x onerror="window.__X2=1">', 'W1', '생활지원사', '', '', '', '', '', '', 'N', 'Y', '신규자', '정상']]);
   const stuX = csv(SH, [['직무교육(필수)', '[2026년 신규자 필수] 생활지원사', '8', '2026-02-01', '100', '90', '수료', '2026-03-10', '정상', 'W1', '<img src=x onerror="window.__X2=1">', 'O1', '<img src=x onerror="window.__X1=1">', '서울', '강남구', '<b onmouseover="window.__X3=1">전담사회복지사</b>', '', '2026 / 3']]);
   await tab(page, '설정'); await page.waitForTimeout(300);
   await page.evaluate(() => { [...document.querySelectorAll('#content .btn')].find(b => b.textContent === '수강데이터 비우기').click(); });
   await page.waitForTimeout(700);
-  await upload(page, 'fileMember', 'mx.csv', memX); await page.waitForFunction(() => window.__LMS_APP.members.length === 1);
+  await upload(page, 'fileMember', 'mx.csv', memX); await page.waitForFunction(() => window.__LMS_APP.members && window.__LMS_APP.members.length === 1);
   await upload(page, 'fileStudent', 'sx.csv', stuX); await page.waitForFunction(() => window.__LMS_APP.result && window.__LMS_APP.studentCount === 1);
   for (const t of ['요약', '데이터 점검', '이수자·미이수자', '보류', '중복자', '과목별', '데이터 현황']) { await tab(page, t); await page.waitForTimeout(250); }
   await tab(page, '개인 조회'); await page.waitForTimeout(250);

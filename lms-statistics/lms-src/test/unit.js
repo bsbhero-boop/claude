@@ -339,6 +339,86 @@ eq('이수자 있는 차수(경력자)', L.roundsWithDone(r12.byRound, '경력�
 eq('데이터의 최신 차수(신규·경력별)', L.maxRoundByCareer(L.coverage(stu12)), { 신규자: 9, 경력자: 21 });
 eq('coverage 없을 때', L.maxRoundByCareer(null), { 신규자: 0, 경력자: 0 });
 
+/* ── F-13 · 회원 명단 구성 — 최신 명단 + 퇴사자 (ver11) ──────────────── */
+group('F-13  명단 기준일 추정 (rosterDate · compareRosterDate)');
+eq('파일명 8자리 날짜', L.rosterDate('회원명단_20261012.xlsx', null), '2026-10-12');
+eq('파일명 점 구분', L.rosterDate('회원명단(2026.10.1).xlsx', null), '2026-10-01');
+eq('파일명 한글 날짜', L.rosterDate('2026년 9월 30일 명단.xlsx', null), '2026-09-30');
+eq('파일명에 날짜 없으면 파일 수정일', L.rosterDate('명단.xlsx', new Date(2026, 7, 15, 10, 0).getTime()), '2026-08-15');
+eq('9자리 숫자는 날짜로 보지 않음', L.rosterDate('코드_202610123.xlsx', null), '');
+eq('달이 13이면 날짜 아님 → 수정일', L.rosterDate('명단_20261340.xlsx', new Date(2026, 0, 2).getTime()), '2026-01-02');
+eq('더 최신 = 1', L.compareRosterDate('2026-10-01', { 기준일: '2026-09-01' }), 1);
+eq('같은 날 = 0', L.compareRosterDate('2026-10-01', { 기준일: '2026-10-01' }), 0);
+eq('더 이전 = -1', L.compareRosterDate('2026-08-01', { 기준일: '2026-09-01' }), -1);
+eq('예전에 저장된 합친 명단(기준일 모름)보다는 항상 최신', L.compareRosterDate('2026-01-01', { legacy: true, 기준일: '2026-12-31' }), 1);
+
+group('F-13  최신 명단 반영 · 직전 명단 자동 보관 (applyLatestRoster)');
+var R = function (id, o) { return M(id, '생활지원사', '신규자', o); };
+var sep = [R('A'), R('B'), R('C'), R('D')], oct = [R('A'), R('B'), R('C'), R('E')];
+var a1 = L.applyLatestRoster(null, null, [], sep, '2026-09-01');
+eq('처음 올린 최신 명단', [a1.action, a1.pool.length, a1.moved], ['first', 0, 0]);
+var a2 = L.applyLatestRoster(sep, { 기준일: '2026-09-01', filename: '9월명단.xlsx' }, a1.pool, oct, '2026-10-01');
+eq('10월 명단 → 9월 명단에서 빠진 D를 퇴사자로 보관', [a2.action, a2.moved, a2.pool.map(function (r) { return r.ID; }).join()], ['moved', 1, 'D']);
+eq('퇴사자 최종확인 = 직전 명단 기준일, 출처 = 직전 명단', [a2.pool[0].최종확인, a2.pool[0].출처], ['2026-09-01', '9월명단.xlsx']);
+var nov = [R('A'), R('B'), R('D')];
+var a3 = L.applyLatestRoster(oct, { 기준일: '2026-10-01', filename: '10월명단.xlsx' }, a2.pool, nov, '2026-11-01');
+eq('11월 명단: D 복귀(퇴사자에서 제외), C·E 새 퇴사자', [a3.returned, a3.moved, a3.pool.map(function (r) { return r.ID; }).sort().join()], [1, 2, 'C,E']);
+var a4 = L.applyLatestRoster(oct, { 기준일: '2026-10-01' }, a2.pool, [R('A'), R('B'), R('C')], '2026-10-01');
+eq('같은 날 명단(정정본)은 교체만, 옮기지 않음', [a4.action, a4.moved, a4.pool.length], ['replaced', 0, 1]);
+var a5 = L.applyLatestRoster(sep, { 기준일: '2026-09-01' }, [], oct, '2026-10-01', { keepPrev: true });
+eq('keepPrev 옵션이면 교체만', [a5.action, a5.moved], ['replaced', 0]);
+var a6 = L.applyLatestRoster(sep, { legacy: true, filename: '합친명단.xlsx' }, [], oct, '2026-10-01');
+eq('예전에 저장된 합친 명단 → 최신에 없는 사람이 퇴사자(기준일 모름)', [a6.action, a6.moved, a6.pool[0].ID, a6.pool[0].최종확인], ['moved', 1, 'D', '']);
+
+group('F-13  이전 명단 추가 (addFormerRoster) · 합치기 (combineRoster)');
+var latest = [R('A'), R('B'), R('C')];
+var merged = [R('A'), R('B'), R('C'), R('D', { 기관명: '기관D-9월' }), R('F')];
+var f1 = L.addFormerRoster([], latest, merged, '2026-09-15', '합친명단.xlsx');
+eq('최신 명단에 있는 3명은 건너뛰고 D·F만 퇴사자', [f1.added, f1.inLatest, f1.pool.map(function (r) { return r.ID; }).join()], [2, 3, 'D,F']);
+var f2 = L.addFormerRoster(f1.pool, latest, [R('D', { 기관명: '기관D-5월' })], '2026-05-01', '5월명단.xlsx');
+eq('더 오래된 명단의 정보는 덮어쓰지 않음', [f2.kept, f2.pool[0].기관명], [1, '기관D-9월']);
+var f3 = L.addFormerRoster(f1.pool, latest, [R('D', { 기관명: '기관D-9월말' })], '2026-09-30', '9월말명단.xlsx');
+eq('더 최근 명단의 정보로 갱신', [f3.updated, f3.pool[0].기관명, f3.pool[0].최종확인], [1, '기관D-9월말', '2026-09-30']);
+var cmb = L.combineRoster(latest, f1.pool.concat([R('A', { 기관명: '오래된A' })]));
+eq('합치기: 최신 3 + 퇴사자 2, 최신에 있는 ID는 pool에 있어도 무시', [cmb.length, cmb.filter(L.isFormerRow).map(function (r) { return r.ID; }).join()], [5, 'D,F']);
+ok('최신 명단 행에는 재직구분을 붙이지 않음(원본 보존)', cmb.slice(0, 3).every(function (r) { return !L.isFormerRow(r); }) && latest[0].재직구분 === undefined);
+
+group('F-13  집계 범위 — 현원(기본) / 현원+퇴사자');
+var mem13 = L.combineRoster([
+  M('a', '생활지원사', '신규자'), M('b', '생활지원사', '경력자'), M('c', '전담사회복지사', '신규자'),
+  M('n', '생활지원사', '신규자', { 교육대상여부: 'N' })                     // 현원이지만 교육대상 아님
+], [
+  Object.assign(M('d', '생활지원사', '신규자'), { 최종확인: '2026-07-01' }),  // 퇴사·이수
+  Object.assign(M('f', '전담사회복지사', '경력자'), { 최종확인: '2026-08-01' }) // 퇴사·미이수
+]);
+var stu13 = [
+  pil('a', P + '생활지원사', 3), pil('c', P + '전담사회복지사', 4, '전담사회복지사'),
+  pil('d', P + '생활지원사', 3),
+  S('f', '직무교육(필수)', K + '전담사회복지사', '전담사회복지사', { 수료여부: '미수료', 진도율: '100', 점수: '0', '연도/차수': '2026 / 6' })
+];
+var cur = L.analyze(mem13, stu13, {}), all13 = L.analyze(mem13, stu13, { basis: 'all' });
+eq('현원 기준 KPI (대상자·이수자·미이수자)', [cur.kpi.대상자, cur.kpi.이수자, cur.kpi.미이수자, cur.kpi.집계기준], [3, 2, 1, 'current']);
+eq('현원+퇴사자 기준 KPI', [all13.kpi.대상자, all13.kpi.이수자, all13.kpi.미이수자, all13.kpi.집계기준], [5, 3, 2, 'all']);
+eq('퇴사 지표는 기준과 무관하게 같음', [cur.kpi.퇴사자, cur.kpi.퇴사대상자, cur.kpi.퇴사이수자, cur.kpi.현원대상자, cur.kpi.현원이수자], [2, 2, 1, 3, 2]);
+eq('퇴사 지표(포함 기준)', [all13.kpi.퇴사자, all13.kpi.퇴사대상자, all13.kpi.퇴사이수자, all13.kpi.현원대상자], [2, 2, 1, 3]);
+var pd = cur.persons.filter(function (p) { return p.ID === 'd'; })[0];
+eq('퇴사자 판정 결과에 재직구분·최종확인', [pd.재직, pd.재직구분, pd.최종확인, pd.이수], [false, '퇴사', '2026-07-01', true]);
+ok('퇴사자의 수강기록은 버려지지 않음(회원정보 없는 ID 아님)', cur.kpi.회원정보없는ID수 === 0 && cur.courseRows.some(function (r) { return r.신청자 === 2 && r.과정명 === P + '생활지원사'; }));
+eq('차수별 이수(3차): 현원 1명 / 포함 2명', [cur.byRound[0].이수자, all13.byRound[0].이수자], [1, 2]);
+eq('미이수자 명단: 현원 기준은 퇴사자 제외', [cur.notCompleted.map(function (p) { return p.ID; }).join(), all13.notCompleted.map(function (p) { return p.ID; }).sort().join()], ['b', 'b,f']);
+eq('시도·직군 집계도 범위를 따름', [cur.bySido[0].대상자, all13.bySido[0].대상자, cur.byGroup.length, all13.byGroup.length], [3, 5, 3, 4]);
+eq('미응시: 현원 기준은 퇴사자 목록 제외', cur.examNoShowRows.length, 0);
+eq('미응시: 포함 기준이어도 퇴사자는 재응시 대상 아님', [all13.examNoShowRows.length, all13.examNoShowRows[0].재응시필요, all13.examNoShowRows[0].재직구분, all13.kpi.재응시필요인원], [1, false, '퇴사', 0]);
+
+group('F-13  대상자 산출 내역 (universeSteps)');
+var st = cur.steps;
+eq('단계 이름', st.map(function (x) { return x.단계; }), ['명단 인원', '교육대상여부 = Y', '상태 = 정상', '대상 시도(16개)', '이수기준 직군·교육구분(생활·전담 × 신규·경력)']);
+eq('현원: 4 → 교육대상 3 → … → 대상자 3', st.map(function (x) { return x.재직; }), [4, 3, 3, 3, 3]);
+eq('퇴사: 2 → … → 2', st.map(function (x) { return x.퇴사; }), [2, 2, 2, 2, 2]);
+eq('마지막 단계 = 현원 대상자 KPI', st[st.length - 1].재직, cur.kpi.현원대상자);
+var r0 = L.analyze([M('x1', '생활지원사', '신규자')], [], {});
+eq('퇴사자 없는 명단(이전 버전과 동일)', [r0.kpi.퇴사자, r0.kpi.대상자, r0.persons[0].재직구분], [0, 1, '재직']);
+
 /* ── 결과 ───────────────────────────────────────────────────────────── */
 console.log(log.join('\n'));
 console.log('');

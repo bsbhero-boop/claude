@@ -1,5 +1,5 @@
 /* =============================================================================
- *  배움터 LMS 직무교육 통계 - 계산 엔진 (compute.js)  ver10
+ *  배움터 LMS 직무교육 통계 - 계산 엔진 (compute.js)  ver11
  *  순수 함수 모듈. 브라우저(window.LMS)·Web Worker·Node 모두에서 동작.
  *  입력: memberRows[], studentRows[]  (각 행은 한글 컬럼명을 key로 갖는 객체)
  *  UI 의존 없음 — 이 파일은 Worker에 그대로 실려 백그라운드에서 실행된다.
@@ -7,7 +7,7 @@
 (function (root) {
   'use strict';
 
-  var VERSION = 'ver10';
+  var VERSION = 'ver11';
 
   // 선택 과목별 차시 (계획서 '교육과목' 기준). 키는 정규화된 과목명.
   var DEFAULT_CHASI = {
@@ -149,6 +149,9 @@
 
   function isDone(rec) { return S(rec['수료여부']) === '수료'; }
   function isSenior(v) { var s = S(v).toUpperCase(); return s === 'Y' || s === '예' || s === '선임'; }
+  // [ver11] 이전 명단에서만 확인되는 사람(퇴사·명단 제외) 표시. combineRoster()가 붙인다.
+  function isFormerRow(m) { return S(m && m['재직구분']) === '퇴사'; }
+  function countTrue(map) { var n = 0; map.forEach(function (v) { if (v) n++; }); return n; }
 
   /* ---- 메인 분석 함수 ---------------------------------------------------- */
   function analyze(memberRows, studentRows, cfg) {
@@ -160,10 +163,14 @@
     // 시도 필터: 회원정보 ID→시도 매핑 후, 허용 시도(16개) 밖이면 모든 통계에서 제외
     var allowed = (cfg.allowedSido && cfg.allowedSido.length) ? new Set(cfg.allowedSido.map(S)) : null;
     var memberSido = new Map(), memberName = new Map();
+    // [ver11] 퇴사자(최신 명단에 없고 이전 명단에만 있는 사람) 구분. 재직구분 열이 없으면 전원 재직(이전 버전과 같음).
+    var memberFormer = new Map();
+    var basisAll = cfg.basis === 'all';   // 'current'(기본) = 현원만 집계, 'all' = 현원+퇴사자
     for (var msi = 0; msi < memberRows.length; msi++) {
       var mid0 = S(memberRows[msi]['ID']);
       memberSido.set(mid0, S(memberRows[msi]['시도']));
       memberName.set(mid0, S(memberRows[msi]['성명']));
+      memberFormer.set(mid0, isFormerRow(memberRows[msi]));
     }
     // 직군변경 보류 검토 결정: { ID: 'approve' | 'reject' }
     var decisions = cfg.decisions || {};
@@ -264,8 +271,9 @@
 
     for (var j = 0; j < memberRows.length; j++) {
       var m = memberRows[j];
+      var former = isFormerRow(m), scoped = basisAll || !former;
       if (!passBase(m)) continue;
-      if (allowed && !allowed.has(S(m['시도']))) { regionExcluded++; continue; }
+      if (allowed && !allowed.has(S(m['시도']))) { if (scoped) regionExcluded++; continue; }
       var mid = S(m['ID']);
       var ut = S(m['사용자유형']);
       var dir = normDirect(ut);
@@ -329,7 +337,7 @@
       if (!pilPick && isPending && decision === 'approve' && crossDone) pilPick = crossDone;
       var pilRound = pilPick ? pilPick.차수 : null;
       var pilDate = pilPick ? (pilPick.수료일 || '') : '';
-      if (이수 && pilRound == null) doneWithoutRound++;
+      if (이수 && pilRound == null && scoped) doneWithoutRound++;
 
       // [ver9] 선택차시가 부족한 경력자에게 '무엇을 더 들으면 되는지' 제시(F-06)
       var 추천과목 = (hasRule && career === '경력자' && selSum < need && o2)
@@ -349,9 +357,10 @@
         경력일치: crossCareerMatch,
         변경완료과정: crossDone ? crossDone.과정명 : '', 변경완료경력: crossDone ? crossDone.경력 : '',
         변경완료수료일: crossDone ? crossDone.수료일 : '', 승인시이수: isPending ? approveWould : false,
-        추천과목: 추천과목.map(function (x) { return x.과목 + '(' + x.차시 + ')'; }).join(' + ')
+        추천과목: 추천과목.map(function (x) { return x.과목 + '(' + x.차시 + ')'; }).join(' + '),
+        재직: !former, 재직구분: former ? '퇴사' : '재직', 최종확인: former ? S(m['최종확인']) : ''
       });
-      if (!o2) notFoundInStudent++;
+      if (!o2 && scoped) notFoundInStudent++;
     }
 
     // ---- 3) 집계표 생성 -------------------------------------------------
@@ -361,8 +370,11 @@
     var bySidoMap = new Map();
     var sidoTreeMap = new Map(); // 시도 → 시군구 → 기관 집계
 
+    // [ver11] 집계 범위: 기본은 현원(재직자)만, 설정에 따라 퇴사자 포함
+    function inScope(p) { return basisAll || p.재직; }
+
     persons.forEach(function (p) {
-      if (!p.기준정의) return; // 헤드라인 이수율은 생활지원사/전담만
+      if (!p.기준정의 || !inScope(p)) return; // 헤드라인 이수율은 생활지원사/전담만
       agg(byGroupMap, p.직군정규화 + ' / ' + p.경력, p.이수);
       agg(bySidoMap, p.시도 || '(미상)', p.이수);
 
@@ -399,6 +411,8 @@
     var examNoShowRows = [];
     perID.forEach(function (o, id) {
       if (!o.examNoShow.length) return;
+      var formerID = memberFormer.get(id) === true;
+      if (formerID && !basisAll) return;   // [ver11] 현원 기준이면 퇴사자는 목록에서 뺀다
       var seen = {};
       o.examNoShow.forEach(function (e) {
         // [ver9] 필수 과정도 _열람전용 접미사를 벗긴다(D-21)
@@ -414,16 +428,17 @@
           카테고리: e.카테고리, 과정명: e.과정명, 연도차수: e.연도차수, 차수: e.차수,
           진도율: e.진도율, 점수: e.점수, 점수미기재: !!e.점수미기재,
           해당과목완료: subjectDone, 전체이수: !!per.이수, 직군: per.직군 || '', 경력: per.경력 || '',
-          // 재응시 필요 = 해당 과목 미완료 AND 본인이 아직 직무교육 미이수(이미 이수자는 제외)
-          재응시필요: !subjectDone && !per.이수
+          // 재응시 필요 = 해당 과목 미완료 AND 본인이 아직 직무교육 미이수(이미 이수자는 제외) AND 재직 중
+          재응시필요: !subjectDone && !per.이수 && !formerID,
+          재직구분: formerID ? '퇴사' : '재직'
         });
       });
     });
     examNoShowRows.sort(function (a, b) { return (a.재응시필요 === b.재응시필요) ? 0 : (a.재응시필요 ? -1 : 1); });
 
     // 미이수자 명단 — 미검토 보류건은 제외(보류 탭에서 검토)
-    var notCompleted = persons.filter(function (p) { return p.기준정의 && !p.이수 && !(p.보류후보 && p.보류상태 === 'pending'); });
-    var pendingRows = persons.filter(function (p) { return p.기준정의 && p.보류후보; });
+    var notCompleted = persons.filter(function (p) { return p.기준정의 && inScope(p) && !p.이수 && !(p.보류후보 && p.보류상태 === 'pending'); });
+    var pendingRows = persons.filter(function (p) { return p.기준정의 && inScope(p) && p.보류후보; });
 
     // 중복 이수 확인
     var duplicateRows = []; var dupIDs = {}; var dupReq = 0, dupSel = 0, dupSameRound = 0;
@@ -447,7 +462,7 @@
 
     // [ver9] 차수별 이수 추이(F-08) — 이수자를 이수 차수 기준으로 묶어 누적한다.
     // [ver10] 같은 차수의 이수자를 신규·경력 × 직군(ROUND_GROUPS)으로도 나눠 둔다(F-12).
-    var ruleP = persons.filter(function (p) { return p.기준정의; });
+    var ruleP = persons.filter(function (p) { return p.기준정의 && inScope(p); });
     var roundMap = new Map();
     ruleP.forEach(function (p) {
       if (!p.이수 || p.차수 == null) return;
@@ -475,7 +490,7 @@
       이수자: ruleP.filter(function (p) { return p.이수; }).length,
       미이수자: ruleP.filter(function (p) { return !p.이수; }).length,
       이수율: rate(ruleP.filter(function (p) { return p.이수; }).length, ruleP.length),
-      기준미정의대상: persons.length - ruleP.length,
+      기준미정의대상: persons.filter(function (p) { return inScope(p) && !p.기준정의; }).length,
       미응시연인원: examNoShowRows.length,
       재응시필요인원: examNoShowRows.filter(function (e) { return e.재응시필요; }).length,
       수강취소제외: skippedCancel,
@@ -490,7 +505,14 @@
       회원정보없는ID수: unknownIDs.length,
       지역외수강행: skippedOutRegion,
       차수없는이수자: doneWithoutRound,
-      점수미기재제외: blankScoreSkipped
+      점수미기재제외: blankScoreSkipped,
+      // [ver11] 재직·퇴사 구분 — 집계 범위와 무관하게 항상 같은 값
+      집계기준: basisAll ? 'all' : 'current',
+      현원대상자: persons.filter(function (p) { return p.기준정의 && p.재직; }).length,
+      현원이수자: persons.filter(function (p) { return p.기준정의 && p.재직 && p.이수; }).length,
+      퇴사자: countTrue(memberFormer),
+      퇴사대상자: persons.filter(function (p) { return p.기준정의 && !p.재직; }).length,
+      퇴사이수자: persons.filter(function (p) { return p.기준정의 && !p.재직 && p.이수; }).length
     };
 
     return {
@@ -509,8 +531,30 @@
       examNoShowRows: examNoShowRows,
       unknownChasi: unknownChasi,
       unknownIDs: unknownIDs,
+      steps: universeSteps(memberRows, cfg),
       counts: { memberRows: memberRows.length, studentRows: studentRows.length, universe: persons.length }
     };
+  }
+
+  // [ver11] 대상자 산출 내역 — 명단 인원이 어느 조건에서 몇 명씩 빠져 대상자가 되는지(재직·퇴사 따로).
+  //  analyze()의 대상자 판정과 같은 순서·조건이므로 마지막 단계의 인원 = 대상자 수.
+  function universeSteps(memberRows, cfg) {
+    cfg = Object.assign({}, DEFAULT_CONFIG, cfg || {});
+    var uf = cfg.universeFilter || {}, ufKeys = Object.keys(uf);
+    var allowed = (cfg.allowedSido && cfg.allowedSido.length) ? new Set(cfg.allowedSido.map(S)) : null;
+    var names = ['명단 인원'].concat(ufKeys.map(function (k) { return k + ' = ' + S(uf[k]); }));
+    if (allowed) names.push('대상 시도(' + allowed.size + '개)');
+    names.push('이수기준 직군·교육구분(생활·전담 × 신규·경력)');
+    var cnt = { 재직: names.map(function () { return 0; }), 퇴사: names.map(function () { return 0; }) };
+    (memberRows || []).forEach(function (m) {
+      var c = cnt[isFormerRow(m) ? '퇴사' : '재직'], i = 0;
+      c[i++]++;
+      for (var k = 0; k < ufKeys.length; k++) { if (S(m[ufKeys[k]]) !== S(uf[ufKeys[k]])) return; c[i++]++; }
+      if (allowed) { if (!allowed.has(S(m['시도']))) return; c[i++]++; }
+      var dir = normDirect(S(m['사용자유형'])), career = S(m['교육구분']);
+      if ((dir === '생활지원사' || dir === '전담사회복지사') && (career === '신규자' || career === '경력자')) c[i]++;
+    });
+    return names.map(function (n, i) { return { 단계: n, 재직: cnt.재직[i], 퇴사: cnt.퇴사[i] }; });
   }
 
   // 보류 후보 기록 비교 — 새 기록 d가 기존 c보다 나은가
@@ -774,6 +818,93 @@
     return { groups: ROUND_GROUPS.slice(), rows: rows, total: total, used: used };
   }
 
+  /* ---- [ver11] 회원 명단 구성: 최신 명단 + 퇴사자(이전 명단) ---------------
+   * 배움터 회원명단은 '받은 시점의 재직자'만 담겨 퇴사자가 빠진다. 퇴사자의 수강기록을 살리려고
+   * 이전 명단을 엑셀로 합쳐 쓰던 일을 도구가 대신한다.
+   *  · 최신 명단에 있는 사람 = 재직. 판정에는 항상 최신 명단의 정보를 쓴다.
+   *  · 이전 명단에만 있는 사람 = 퇴사(명단 제외). 이 사람들만 pool에 보관한다(과거 명단 전체를 쌓지 않음).
+   *  · 더 최신 명단이 들어오면 직전 명단에서 빠진 사람을 pool로 옮기고, 다시 나타난 사람은 pool에서 뺀다. */
+
+  // 명단 기준일 추정: 파일명의 날짜(20261012 · 2026-10-12 · 2026.10.12 · 2026년 10월 12일) → 없으면 파일 수정일.
+  function rosterDate(fileName, lastModified) {
+    var s = S(fileName);
+    var m = s.match(/(?:^|\D)(20\d{2})(\d{2})(\d{2})(?!\d)/) || s.match(/(20\d{2})\s*[-._년]\s*(\d{1,2})\s*[-._월]\s*(\d{1,2})(?!\d)/);
+    if (m) { var mo = +m[2], d = +m[3]; if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) return m[1] + '-' + pad2(mo) + '-' + pad2(d); }
+    if (lastModified != null && isFinite(lastModified)) { var dt = new Date(+lastModified); if (!isNaN(dt.getTime())) return isoDate(dt); }
+    return '';
+  }
+
+  // 새 명단이 지금의 최신 명단보다 최신인가: 1 최신 / 0 같은 날 / -1 더 이전.
+  //  지금 명단의 기준일을 모르면(ver10까지 저장된 합친 명단 등) 새 명단을 최신으로 본다.
+  function compareRosterDate(newDate, prevMeta) {
+    var pd = prevMeta && !prevMeta.legacy ? S(prevMeta.기준일) : '', nd = S(newDate);
+    if (!pd || !nd) return 1;
+    return nd > pd ? 1 : (nd === pd ? 0 : -1);
+  }
+
+  function idSet(rows) { var s = new Set(); (rows || []).forEach(function (r) { var id = S(r && r['ID']); if (id) s.add(id); }); return s; }
+
+  // 같은 사람이 여러 이전 명단에 있으면 기준일이 늦은 쪽 정보를 쓴다(같거나 모르면 나중에 반영한 쪽).
+  function poolNewer(a, b) {
+    var da = S(a['최종확인']), db = S(b['최종확인']);
+    if (da && db) return da >= db;
+    return !(db && !da);
+  }
+  function upsertPool(out, idx, row) {
+    var id = S(row['ID']);
+    if (!idx.has(id)) { idx.set(id, out.length); out.push(row); return 'added'; }
+    var i = idx.get(id);
+    if (poolNewer(row, out[i])) { out[i] = row; return 'updated'; }
+    return 'kept';
+  }
+
+  // 새 최신 명단 반영. opts.keepPrev=true 면 직전 명단을 퇴사자로 옮기지 않는다(같은 날 다시 받은 명단·정정본).
+  // 반환: { action: 'first'|'moved'|'replaced', pool, moved(새로 퇴사자가 된 인원), returned(퇴사자였다가 다시 나타난 인원) }
+  function applyLatestRoster(prevRows, prevMeta, pool, newRows, newDate, opts) {
+    opts = opts || {};
+    var newIDs = idSet(newRows), out = [], idx = new Map(), returned = 0, moved = 0;
+    (pool || []).forEach(function (r) {
+      var id = S(r['ID']);
+      if (newIDs.has(id)) { returned++; return; }
+      idx.set(id, out.length); out.push(r);
+    });
+    var action = (prevRows && prevRows.length) ? 'replaced' : 'first';
+    if (action === 'replaced' && !opts.keepPrev && compareRosterDate(newDate, prevMeta) > 0) {
+      action = 'moved';
+      var pd = prevMeta && !prevMeta.legacy ? S(prevMeta.기준일) : '';
+      var src = (prevMeta && prevMeta.filename) || '직전 최신 명단';
+      prevRows.forEach(function (r) {
+        var id = S(r['ID']);
+        if (!id || newIDs.has(id)) return;
+        upsertPool(out, idx, Object.assign({}, r, { 최종확인: pd, 출처: src }));
+        moved++;
+      });
+    }
+    return { action: action, pool: out, moved: moved, returned: returned };
+  }
+
+  // 이전 명단(직접 합친 전체 명단·과거 명단) 추가. 최신 명단에 있는 사람은 재직자이므로 건너뛴다.
+  function addFormerRoster(pool, latestRows, rows, date, source) {
+    var latest = idSet(latestRows), out = (pool || []).slice(), idx = new Map();
+    var res = { added: 0, updated: 0, kept: 0, inLatest: 0 };
+    out.forEach(function (r, i) { idx.set(S(r['ID']), i); });
+    (rows || []).forEach(function (r) {
+      var id = S(r['ID']);
+      if (!id) return;
+      if (latest.has(id)) { res.inLatest++; return; }
+      res[upsertPool(out, idx, Object.assign({}, r, { 최종확인: S(date), 출처: S(source) }))]++;
+    });
+    res.pool = out;
+    return res;
+  }
+
+  // 집계에 넘길 회원 행 = 최신 명단 + 퇴사자(pool). 퇴사자 행에만 재직구분='퇴사'를 붙인다.
+  function combineRoster(latestRows, pool) {
+    var latest = idSet(latestRows), out = (latestRows || []).slice();
+    (pool || []).forEach(function (r) { if (!latest.has(S(r['ID']))) out.push(Object.assign({}, r, { 재직구분: '퇴사' })); });
+    return out;
+  }
+
   var API = {
     VERSION: VERSION,
     analyze: analyze, coverage: coverage, diagnose: diagnose,
@@ -781,7 +912,9 @@
     normDirect: normDirect, selBase: selBase, pilMeta: pilMeta, courseType: courseType,
     normDate: normDate, parseRound: parseRound, parseYear: parseYear, hasVal: hasVal, isSenior: isSenior,
     ROUND_GROUPS: ROUND_GROUPS, parseRoundSpec: parseRoundSpec, formatRounds: formatRounds,
-    roundsWithDone: roundsWithDone, maxRoundByCareer: maxRoundByCareer, roundTable: roundTable
+    roundsWithDone: roundsWithDone, maxRoundByCareer: maxRoundByCareer, roundTable: roundTable,
+    rosterDate: rosterDate, compareRosterDate: compareRosterDate, applyLatestRoster: applyLatestRoster,
+    addFormerRoster: addFormerRoster, combineRoster: combineRoster, universeSteps: universeSteps, isFormerRow: isFormerRow
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = API;
   root.LMS = API;
