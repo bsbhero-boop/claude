@@ -1,0 +1,10 @@
+{
+  "name": "lms-statistics",
+  "private": true,
+  "type": "commonjs",
+  "description": "배움터 LMS 직무교육 통계 대시보드 — 단일 HTML 빌드 소스",
+  "scripts": {
+    "build": "node lms-src/build.js",
+    "test": "node lms-src/test/unit.js"
+  }
+}
