@@ -8,8 +8,8 @@ const path = require('path');
 
 const SRC = __dirname;
 const ROOT = path.resolve(SRC, '..');
-const VERSION = 'ver9';
-const OUT = path.join(ROOT, 'lms-statistics-v9.html');
+const VERSION = 'ver10';
+const OUT = path.join(ROOT, 'lms-statistics-v10.html');
 
 function read(p) { return fs.readFileSync(path.join(SRC, p), 'utf8'); }
 
@@ -36,6 +36,10 @@ const css = read('app.css');
 const compute = read('compute.js');
 let app = read('app.js').replace(/@@VERSION@@/g, VERSION);
 const b64 = read(path.join('vendor', 'xlsx.full.min.js.b64')).trim();
+
+// [ver10] 버전 표기가 파일마다 어긋나지 않도록 빌드 버전과 대조한다.
+if (compute.indexOf("var VERSION = '" + VERSION + "';") < 0) throw new Error('compute.js 의 VERSION 이 ' + VERSION + ' 과 다릅니다');
+if (read('page.html').indexOf('id="verTag">' + VERSION + '<') < 0) throw new Error('page.html 의 버전 표기가 ' + VERSION + ' 과 다릅니다');
 
 // compute.js 는 <script type="text/plain"> 에 들어가므로 </script 만 막으면 된다.
 if (/<\/script/i.test(compute)) throw new Error('compute.js 에 </script 문자열이 있습니다');

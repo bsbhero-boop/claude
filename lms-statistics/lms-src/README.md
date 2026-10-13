@@ -1,6 +1,6 @@
 # lms-src — 소스 구성과 빌드
 
-`lms-statistics-v9.html` 은 이 폴더의 파일들을 합쳐 만든 **단일 파일 산출물**입니다.
+`lms-statistics-v10.html` 은 이 폴더의 파일들을 합쳐 만든 **단일 파일 산출물**입니다.
 직접 HTML을 고치지 말고 여기서 고친 뒤 다시 빌드하세요.
 
 ## 파일
@@ -11,10 +11,10 @@
 | `app.js` | 화면 로직. 업로드·파싱·탭·표·필터·내보내기·설정 |
 | `app.css` | 스타일 |
 | `page.html` | HTML 골격 (빌드 시 `/*@@마커@@*/` 치환) |
-| `build.js` | 위 파일들을 합쳐 `../lms-statistics-v9.html` 생성 |
+| `build.js` | 위 파일들을 합쳐 `../lms-statistics-v10.html` 생성 |
 | `vendor/xlsx.full.min.js.b64` | SheetJS 원본을 base64로 보관 |
-| `test/unit.js` | 계산 엔진 단위 검증 (Node, 86건) |
-| `test/e2e.js` | 빌드 결과물 브라우저 검증 (Playwright, 56건) |
+| `test/unit.js` | 계산 엔진 단위 검증 (Node, 124건) |
+| `test/e2e.js` | 빌드 결과물 브라우저 검증 (Playwright, 84건) |
 
 ## 빌드
 
@@ -34,10 +34,10 @@ npm i -D playwright && node lms-src/test/e2e.js  # 브라우저 (빌드 후 실�
 # 시스템 크로미움을 쓰려면: CHROME=/path/to/chrome node lms-src/test/e2e.js
 ```
 
-## 실행 구조 (ver9)
+## 실행 구조 (ver9~)
 
 ```
-lms-statistics-v9.html
+lms-statistics-v10.html
 ├── <script type="text/plain" id="xlsx-b64">   SheetJS 원본(base64)
 │     └─ 부트스트랩이 blob: URL 스크립트로 로드  → window.XLSX
 ├── <script type="text/plain" id="compute-src"> compute.js 원본(텍스트 한 벌)

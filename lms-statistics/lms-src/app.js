@@ -608,6 +608,7 @@
     if (uk.length) note(c, '차시 매핑이 없는 선택과목 ' + uk.length + '건: ' + esc(uk.slice(0, 6).join(', ')) + '. <b>설정</b>에서 차시를 추가하면 경력자 이수 계산에 반영됩니다.');
 
     c.appendChild(renderRateTable());
+    c.appendChild(renderRoundTable());
     if (state.result.byRound && state.result.byRound.length > 1) c.appendChild(renderTrend());
 
     var card = el('div', { class: 'card' });
@@ -662,6 +663,148 @@
     var box = el('div', { class: 'trendwrap' }); box.innerHTML = svg.join('');
     card.appendChild(box);
     return card;
+  }
+
+  /* ---------- 차수별 이수현황표 (F-12, ver10) ------------------------- */
+  // 지정한 차수의 이수자를 신규자·경력자 × 직군으로 집계한다(차수 = 필수과정 수료 차수).
+  //  · 공통(기본): 한 차수 목록을 신규자·경력자에 똑같이 적용
+  //  · 따로: 신규자(월 단위)와 경력자(2주 단위)는 개강 주기가 달라 같은 기간이라도
+  //          차수 번호가 다르므로 각각 지정할 수 있게 한다.
+  //  지정값 null = '이수자가 있는 차수 전부'(데이터가 늘면 자동으로 따라간다).
+  var rtIgnored = [];
+  function getRoundPick() {
+    var rp = state.config.roundTable;
+    if (!rp || typeof rp !== 'object') rp = state.config.roundTable = {};
+    if (rp.mode !== 'split') rp.mode = 'same';
+    ['same', '신규자', '경력자'].forEach(function (k) { if (!Array.isArray(rp[k])) rp[k] = null; });
+    return rp;
+  }
+  function renderRoundTable() {
+    var res = state.result, rp = getRoundPick();
+    var lastOf = function (a) { return a.length ? a[a.length - 1] : 0; };
+    var done = { same: LMS.roundsWithDone(res.byRound), 신규자: LMS.roundsWithDone(res.byRound, '신규자'), 경력자: LMS.roundsWithDone(res.byRound, '경력자') };
+    var maxC = LMS.maxRoundByCareer(state.coverage);
+    var maxR = { 신규자: Math.max(maxC.신규자, lastOf(done.신규자)), 경력자: Math.max(maxC.경력자, lastOf(done.경력자)) };
+    maxR.same = Math.max(maxR.신규자, maxR.경력자, lastOf(done.same));
+    var scopes = rp.mode === 'split' ? ['신규자', '경력자'] : ['same'];
+    var picked = function (sc) { return rp[sc] || done[sc]; };
+    var tbl = LMS.roundTable(res.byRound, rp.mode === 'split' ? { 신규자: picked('신규자'), 경력자: picked('경력자') } : picked('same'));
+    var specOf = function (sc) { var f = LMS.formatRounds(picked(sc)); return f ? f + '차' : '지정 없음'; };
+    var specLabel = rp.mode === 'split' ? '신규자 ' + specOf('신규자') + ' · 경력자 ' + specOf('경력자') : specOf('same');
+
+    var card = el('div', { class: 'card', id: 'roundTableCard' });
+    function redraw() { saveConfig(); card.replaceWith(renderRoundTable()); }
+
+    var head = el('div', { class: 'head' });
+    head.appendChild(el('div', { html: '<h2>차수별 이수현황표</h2><p class="desc">지정한 차수의 이수자를 신규자·경력자 × 직군별로 집계합니다. 차수는 <b>필수과정을 수료한 차수</b>이며, 경력자는 선택 차시까지 충족한 <b>최종 이수자</b>만 셉니다.</p>' }));
+    var eb = el('button', { class: 'btn sec sm' }, '엑셀 다운로드');
+    eb.onclick = function () { exportRoundTable(tbl, specLabel); };
+    head.appendChild(eb);
+    card.appendChild(head);
+
+    var mbar = el('div', { class: 'toolbar' });
+    mbar.appendChild(el('span', { class: 'hint' }, '차수 지정:'));
+    var ms = el('select', { 'aria-label': '차수 지정 방식' });
+    [['same', '신규자·경력자 공통'], ['split', '신규자·경력자 따로']].forEach(function (o) { ms.appendChild(el('option', { value: o[0] }, o[1])); });
+    ms.value = rp.mode;
+    ms.onchange = function () { rp.mode = ms.value; redraw(); };
+    mbar.appendChild(ms);
+    mbar.appendChild(el('span', { class: 'hint' }, '입력 예: 7-9, 15-21 · 15~ (15차부터 최신까지) · 아래 번호를 눌러 넣고 빼기'));
+    card.appendChild(mbar);
+
+    scopes.forEach(function (sc) {
+      var row = el('div', { class: 'toolbar rspec' });
+      row.appendChild(el('span', { class: 'rlab' }, sc === 'same' ? '차수' : sc));
+      var inp = el('input', { type: 'text', 'data-scope': sc, placeholder: '예: 7-9, 15-21', style: 'width:220px' });
+      inp.value = LMS.formatRounds(picked(sc));
+      var apply = function () {
+        var r = LMS.parseRoundSpec(inp.value, maxR[sc] || null);
+        rp[sc] = r.rounds; rtIgnored = r.ignored; redraw();
+      };
+      inp.onkeydown = function (e) { if (e.key === 'Enter') apply(); };
+      var ab = el('button', { class: 'btn sm' }, '적용'); ab.onclick = apply;
+      var all = el('button', { class: 'btn sec sm', title: '이수자가 있는 차수 전부' }, '전체'); all.onclick = function () { rp[sc] = null; redraw(); };
+      var clr = el('button', { class: 'btn sec sm' }, '비우기'); clr.onclick = function () { rp[sc] = []; redraw(); };
+      row.appendChild(inp); row.appendChild(ab); row.appendChild(all); row.appendChild(clr);
+      card.appendChild(row);
+
+      // 번호 버튼: 1차 ~ 최신 차수. 이수자가 없는 차수는 흐리게 표시한다.
+      var chips = el('div', { class: 'toolbar rchips' });
+      var cur = {}, has = {};
+      picked(sc).forEach(function (n) { cur[n] = 1; });
+      done[sc].forEach(function (n) { has[n] = 1; });
+      var top = Math.max(maxR[sc], lastOf(picked(sc)));
+      for (var n = 1; n <= top; n++) (function (n) {
+        var b = el('button', { class: 'rchip' + (cur[n] ? ' on' : '') + (has[n] ? '' : ' zero'), 'data-round': String(n), 'aria-pressed': cur[n] ? 'true' : 'false' }, n + '차');
+        if (!has[n]) b.title = '이 차수에는 이수자가 없습니다';
+        b.onclick = function () {
+          var list = picked(sc).slice(), i = list.indexOf(n);
+          if (i >= 0) list.splice(i, 1); else list.push(n);
+          rp[sc] = list.sort(function (a, b) { return a - b; }); redraw();
+        };
+        chips.appendChild(b);
+      })(n);
+      card.appendChild(chips);
+    });
+
+    if (rtIgnored.length) { note(card, '반영하지 못한 입력: <b>' + esc(rtIgnored.join(', ')) + '</b> — 1 이상의 차수 번호나 범위(예: 7-9)로 입력해 주세요.', 'warnnote'); rtIgnored = []; }
+
+    var allDone = res.byRound.reduce(function (s, r) { return s + r.이수자; }, 0);
+    var outside = allDone - tbl.total.합계;
+    note(card, '지정 차수: <b>' + esc(specLabel) + '</b> · 이수자 <b>' + fmt(tbl.total.합계) + '명</b>' +
+      (outside > 0 ? ' <span class="muted">(지정하지 않은 차수의 이수자 ' + fmt(outside) + '명은 제외)</span>' : ''), 'info');
+
+    // 경력자는 필수만 끝내고 선택이 남은 사람이 표에서 빠진다 — 숫자를 LMS 수료 인원과 맞춰 볼 때 혼동하지 않도록 알린다.
+    var exSet = {}; picked(rp.mode === 'split' ? '경력자' : 'same').forEach(function (n) { exSet[n] = 1; });
+    var exPend = (res.persons || []).filter(function (p) { return p.기준정의 && p.경력 === '경력자' && p.필수수료 && !p.이수 && p.차수 != null && exSet[p.차수]; }).length;
+    if (exPend) note(card, '참고: 지정한 차수에 필수과정은 수료했지만 선택 차시가 부족해 아직 미이수인 <b>경력자 ' + fmt(exPend) + '명</b>은 표에 포함되지 않습니다.');
+    if (res.kpi.차수없는이수자) note(card, '차수를 확인할 수 없는 이수자 <b>' + fmt(res.kpi.차수없는이수자) + '명</b>은 어느 차수에도 들어가지 않습니다(데이터 점검 탭 참고).', 'warnnote');
+    var yrs = (state.coverage && state.coverage.summary && state.coverage.summary.연도) || [];
+    if (yrs.length > 1) note(card, '데이터에 여러 연도(' + esc(yrs.join('·')) + ')가 섞여 있습니다. 차수 번호는 연도를 구분하지 않으므로 <b>같은 번호의 차수가 합쳐집니다.</b>', 'warnnote');
+
+    if (!tbl.rows.length) {
+      card.appendChild(el('div', { class: 'empty-state', style: 'padding:24px 10px' }, '차수를 지정하면 표가 나타납니다. 위 칸에 입력하거나 번호를 눌러 고르세요.'));
+      return card;
+    }
+    var tw = el('div', { class: 'tablewrap' }); var table = el('table', { class: 'rtable' });
+    table.innerHTML = '<thead><tr><th rowspan="2" class="no">차수</th><th colspan="2" class="no grp">신규자</th><th colspan="2" class="no grp">경력자</th><th rowspan="2" class="num no">합계</th></tr>' +
+      '<tr><th class="num no">생활지원사</th><th class="num no">전담사회복지사</th><th class="num no">생활지원사</th><th class="num no">전담사회복지사</th></tr></thead>';
+    var tb = el('tbody'); table.appendChild(tb);
+    function cell(v) { return v == null ? el('td', { class: 'na', title: '지정하지 않은 차수' }, '-') : el('td', { class: 'num' + (v ? '' : ' zero') }, fmt(v)); }
+    tbl.rows.forEach(function (r) {
+      var tr = el('tr');
+      tr.appendChild(el('td', {}, r.차수 + '차'));
+      tbl.groups.forEach(function (g) { tr.appendChild(cell(r[g])); });
+      tr.appendChild(el('td', { class: 'num rsum' }, fmt(r.합계)));
+      tb.appendChild(tr);
+    });
+    var ttr = el('tr', { class: 'totalrow' });
+    ttr.appendChild(el('td', {}, '합계'));
+    tbl.groups.forEach(function (g) { ttr.appendChild(cell(tbl.total[g])); });
+    ttr.appendChild(el('td', { class: 'num' }, fmt(tbl.total.합계)));
+    tb.appendChild(ttr);
+    tw.appendChild(table); card.appendChild(tw);
+    return card;
+  }
+  function exportRoundTable(tbl, specLabel) {
+    if (!tbl.rows.length) { alert('지정한 차수가 없습니다. 차수를 먼저 지정해 주세요.'); return; }
+    var val = function (v) { return v == null ? '-' : v; };
+    var H = 5; // 머리글이 시작되는 행(0부터)
+    var aoa = [['차수별 이수현황표'], ['지정 차수: ' + specLabel],
+      ['집계 기준: 최종 이수자(경력자는 선택 차시까지 충족) · 차수 = 필수과정 수료 차수 · "-" = 지정하지 않은 차수'],
+      ['도구 버전: ' + VERSION + ' · 생성: ' + new Date().toLocaleString('ko-KR')], [],
+      ['차수', '신규자', '', '경력자', '', '합계'],
+      ['', '생활지원사', '전담사회복지사', '생활지원사', '전담사회복지사', '']];
+    tbl.rows.forEach(function (r) { aoa.push([r.차수 + '차'].concat(tbl.groups.map(function (g) { return val(r[g]); }), [r.합계])); });
+    aoa.push(['합계'].concat(tbl.groups.map(function (g) { return val(tbl.total[g]); }), [tbl.total.합계]));
+    var ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!merges'] = [
+      { s: { r: H, c: 0 }, e: { r: H + 1, c: 0 } }, { s: { r: H, c: 1 }, e: { r: H, c: 2 } },
+      { s: { r: H, c: 3 }, e: { r: H, c: 4 } }, { s: { r: H, c: 5 }, e: { r: H + 1, c: 5 } }
+    ];
+    ws['!cols'] = [{ wch: 8 }, { wch: 12 }, { wch: 15 }, { wch: 12 }, { wch: 15 }, { wch: 9 }];
+    var wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, '차수별이수현황');
+    XLSX.writeFile(wb, '차수별_이수현황표.xlsx');
   }
 
   /* ---------- 이수율 현황표 ------------------------------------------- */
@@ -1610,10 +1753,10 @@
     // [ver9] 초기화는 확인을 받고, 배정·채용·산출기간은 보존한다(D-12)
     var rb = el('button', { class: 'btn sec sm', style: 'margin-top:12px' }, '이수 기준 기본값으로 초기화');
     rb.onclick = function () {
-      if (!confirm('이수 기준·차시표·대상 시도·미응시 임계값을 기본값으로 되돌립니다.\n\n배정·채용인원, 기준일 메모, 산출기간 설정, 직군변경 검토 결정은 그대로 유지됩니다.\n\n계속할까요?')) return;
-      var keep = { alloc: state.config.alloc, allocNote: state.config.allocNote, period: state.config.period };
+      if (!confirm('이수 기준·차시표·대상 시도·미응시 임계값을 기본값으로 되돌립니다.\n\n배정·채용인원, 기준일 메모, 산출기간 설정, 차수별 현황표의 지정 차수, 직군변경 검토 결정은 그대로 유지됩니다.\n\n계속할까요?')) return;
+      var keep = { alloc: state.config.alloc, allocNote: state.config.allocNote, period: state.config.period, roundTable: state.config.roundTable };
       state.config = JSON.parse(JSON.stringify(LMS.DEFAULT_CONFIG));
-      state.config.alloc = keep.alloc; state.config.allocNote = keep.allocNote; state.config.period = keep.period;
+      state.config.alloc = keep.alloc; state.config.allocNote = keep.allocNote; state.config.period = keep.period; state.config.roundTable = keep.roundTable;
       saveAndRecompute().then(function () { renderTab(); });
     };
     card.appendChild(rb);

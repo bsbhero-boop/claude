@@ -256,6 +256,89 @@ eq('최초 신청일 정규화', cv.summary.최초신청일, '2026-02-01');
 eq('최근 수료일 정규화', cv.summary.최근수료일, '2026-06-26');
 eq('연도차수 구간', cv.byYearRound.length, 2);
 
+/* ── F-12 · 차수별 이수현황표 (ver10) ─────────────────────────────────── */
+group('F-12  차수별 이수현황 — byRound 신규·경력 × 직군 분해');
+var P = '[2026년 신규자 필수] ', K = '[2026년 경력자 필수] ', SEL = '[2026년 선택] ';
+var pil = function (id, name, round, ut) { return S(id, '직무교육(필수)', name, ut, { '연도/차수': round === '' ? '' : '2026 / ' + round }); };
+var sel = function (id, subj, ut) { return S(id, '직무교육(선택)', SEL + subj, ut); };
+var mem12 = [
+  M('n1', '생활지원사', '신규자'), M('n2', '생활지원사', '신규자'), M('n3', '생활지원사', '신규자'), M('n4', '생활지원사', '신규자'),
+  M('d1', '전담사회복지사', '신규자'), M('d2', '광역전담사회복지사', '신규자'),
+  M('e1', '생활지원사', '경력자'), M('e2', '생활지원사', '경력자'), M('e3', '생활지원사', '경력자'),
+  M('f1', '전담사회복지사', '경력자'),
+  M('x1', '중간관리자', '신규자'),          // 이수기준 미정의 → 표에서 제외
+  M('z1', '생활지원사', '신규자')           // 차수 없는 수료 → 어느 차수에도 없음
+];
+var stu12 = [
+  pil('n1', P + '생활지원사', 7), pil('n2', P + '생활지원사', 7), pil('n3', P + '생활지원사', 8), pil('n4', P + '생활지원사', 9),
+  pil('d1', P + '전담사회복지사', 9, '전담사회복지사'), pil('d2', P + '전담사회복지사', 9, '광역전담사회복지사'),
+  // e1: 필수 15차 + 선택 5+5+3=13차시 → 이수 / e2: 필수 16차 + 선택 3차시 → 미이수 / e3: 필수 7차 + 13차시 → 이수
+  pil('e1', K + '생활지원사', 15), sel('e1', '노인 상담기법 이해와 활용(내러티브상담)'), sel('e1', '노인 상담기법 이해와 활용(동기강화상담)'), sel('e1', '노인 신체건강'),
+  pil('e2', K + '생활지원사', 16), sel('e2', '노인 신체건강'),
+  pil('e3', K + '생활지원사', 7), sel('e3', '노인 상담기법 이해와 활용(내러티브상담)'), sel('e3', '노인 상담기법 이해와 활용(동기강화상담)'), sel('e3', '노인 신체건강'),
+  // f1: 전담 경력 필수 21차 + 선택 10차시 → 이수
+  pil('f1', K + '전담사회복지사', 21, '전담사회복지사'), sel('f1', '노인 상담기법 이해와 활용(내러티브상담)', '전담사회복지사'), sel('f1', '노인 상담기법 이해와 활용(동기강화상담)', '전담사회복지사'),
+  pil('x1', P + '생활지원사', 7, '중간관리자'),
+  pil('z1', P + '생활지원사', '')
+];
+var r12 = L.analyze(mem12, stu12, {});
+var br = {}; r12.byRound.forEach(function (r) { br[r.차수] = r; });
+var G = L.ROUND_GROUPS;
+var cnt = function (n) { return G.map(function (g) { return br[n] ? br[n][g] : null; }); };
+eq('열 순서 = 신규(생활·전담) → 경력(생활·전담)', G, ['신규자|생활지원사', '신규자|전담사회복지사', '경력자|생활지원사', '경력자|전담사회복지사']);
+eq('이수자가 있는 차수만 행으로', r12.byRound.map(function (r) { return r.차수; }), [7, 8, 9, 15, 21]);
+eq('7차 = 신규생활 2 · 경력생활 1', cnt(7), [2, 0, 1, 0]);
+eq('9차 = 신규생활 1 · 신규전담 2(광역 포함)', cnt(9), [1, 2, 0, 0]);
+eq('21차 = 경력전담 1', cnt(21), [0, 0, 0, 1]);
+ok('선택 차시가 부족한 경력자(16차)는 빠짐', !br[16]);
+ok('행마다 네 칸의 합 = 그 차수 이수자', r12.byRound.every(function (r) { return G.reduce(function (s, g) { return s + r[g]; }, 0) === r.이수자; }));
+eq('차수 합계 = 이수자 − 차수 없는 이수자', r12.byRound.reduce(function (s, r) { return s + r.이수자; }, 0), r12.kpi.이수자 - r12.kpi.차수없는이수자);
+eq('누적 이수자(F-08) 유지', r12.byRound.map(function (r) { return r.누적이수자; }), [3, 4, 7, 8, 9]);
+
+group('F-12  차수 지정 해석 (parseRoundSpec · formatRounds)');
+var prs = function (t, m) { var x = L.parseRoundSpec(t, m); return [L.formatRounds(x.rounds), x.ignored]; };
+eq('범위 + 범위 (이미지 예시)', prs('7-9, 15-21'), ['7~9, 15~21', []]);
+eq('물결표·쉼표 붙여 쓰기', prs('7~9,15~21'), ['7~9, 15~21', []]);
+eq('"차" 붙여 쓰기', prs('7차, 8차, 9차'), ['7~9', []]);
+eq('"7차~9차 15"', prs('7차~9차 15'), ['7~9, 15', []]);
+eq('끝이 열린 범위는 최신 차수까지', prs('15~', 21), ['15~21', []]);
+eq('최신 차수를 모르면 열린 범위는 반영 안 함', prs('15~', null), ['', ['15-']]);
+eq('최신 차수를 넘는 열린 범위는 반영 안 함', prs('15~', 10), ['', ['15-']]);
+eq('앞이 열린 범위는 1차부터', prs('~3'), ['1~3', []]);
+eq('역순 범위는 바로잡음', prs('9-7'), ['7~9', []]);
+eq('잘못된 값은 따로 알림', prs('abc, 0, 5'), ['5', ['abc', '0']]);
+eq('터무니없는 범위는 거부', prs('1-5000'), ['', ['1-5000']]);
+eq('중복·공백 정리', prs(' 3 , 3, 4 '), ['3~4', []]);
+eq('대시 변형(–) 허용', prs('7–9'), ['7~9', []]);
+eq('formatRounds 정렬·압축', L.formatRounds([21, 7, 9, 8, 15, 8]), '7~9, 15, 21');
+
+group('F-12  차수별 이수현황표 (roundTable)');
+var picks = [7, 8, 9, 15, 16, 17, 18, 19, 20, 21];   // 사용자 이미지의 차수 구성
+var t1 = L.roundTable(r12.byRound, picks);
+eq('지정한 차수가 전부 행이 됨(이수자 0명 차수 포함)', t1.rows.map(function (r) { return r.차수; }), picks);
+eq('이수자 없는 16차는 0', G.map(function (g) { return t1.rows[3 + 1][g]; }), [0, 0, 0, 0]);
+eq('7차 행 합계', t1.rows[0].합계, 3);
+eq('합계 행', G.map(function (g) { return t1.total[g]; }).concat([t1.total.합계]), [4, 2, 2, 1, 9]);
+var t2 = L.roundTable(r12.byRound, { 신규자: [7, 8, 9], 경력자: [15, 16, 17, 18, 19, 20, 21] });
+eq('따로 지정: 7차의 경력자 칸은 해당 없음(null)', G.map(function (g) { return t2.rows[0][g]; }), [2, 0, null, null]);
+eq('따로 지정: 7차 행 합계는 신규자만', t2.rows[0].합계, 2);
+eq('따로 지정: 합계에서 경력 7차(e3) 제외', G.map(function (g) { return t2.total[g]; }).concat([t2.total.합계]), [4, 2, 1, 1, 8]);
+var t3 = L.roundTable(r12.byRound, { 신규자: [7, 8, 9], 경력자: [] });
+eq('한쪽을 비우면 그쪽 합계는 해당 없음', [t3.total['경력자|생활지원사'], t3.used.경력자, t3.total.합계], [null, false, 6]);
+eq('아무것도 지정 안 하면 빈 표', L.roundTable(r12.byRound, []).rows.length, 0);
+// 이수율 현황표의 산출기간(차수 7~9)과 같은 기준인지: 사람 단위로 직접 센 값과 대조
+var direct = G.map(function (g) {
+  return r12.persons.filter(function (p) { return p.기준정의 && p.이수 && p.차수 >= 7 && p.차수 <= 9 && (p.경력 + '|' + p.직군정규화) === g; }).length;
+});
+eq('사람 단위 직접 집계와 일치(7~9차)', G.map(function (g) { return L.roundTable(r12.byRound, [7, 8, 9]).total[g]; }), direct);
+
+group('F-12  기본 지정·번호 범위 (roundsWithDone · maxRoundByCareer)');
+eq('이수자 있는 차수(전체)', L.roundsWithDone(r12.byRound), [7, 8, 9, 15, 21]);
+eq('이수자 있는 차수(신규자)', L.roundsWithDone(r12.byRound, '신규자'), [7, 8, 9]);
+eq('이수자 있는 차수(경력자)', L.roundsWithDone(r12.byRound, '경력자'), [7, 15, 21]);
+eq('데이터의 최신 차수(신규·경력별)', L.maxRoundByCareer(L.coverage(stu12)), { 신규자: 9, 경력자: 21 });
+eq('coverage 없을 때', L.maxRoundByCareer(null), { 신규자: 0, 경력자: 0 });
+
 /* ── 결과 ───────────────────────────────────────────────────────────── */
 console.log(log.join('\n'));
 console.log('');

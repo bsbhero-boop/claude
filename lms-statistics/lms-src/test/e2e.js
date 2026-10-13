@@ -13,7 +13,9 @@ let chromium;
 try { ({ chromium } = require('playwright')); }
 catch (e) { console.error('playwright 가 필요합니다:  npm i -D playwright'); process.exit(2); }
 
-const APP = 'file://' + path.resolve(__dirname, '..', '..', 'lms-statistics-v9.html');
+// 빌드 버전을 build.js 에서 읽어, 버전을 올릴 때 테스트를 따로 고치지 않아도 되게 한다.
+const VER = fs.readFileSync(path.join(__dirname, '..', 'build.js'), 'utf8').match(/const VERSION = '(ver\d+)'/)[1];
+const APP = 'file://' + path.resolve(__dirname, '..', '..', 'lms-statistics-v' + VER.slice(3) + '.html');
 const EXEC = process.env.CHROME || undefined;
 
 let pass = 0, fail = 0;
@@ -221,7 +223,138 @@ const tab = (page, label) => page.evaluate(l => {
   await page.evaluate(() => { [...document.querySelectorAll('#content .btn')].find(b => b.textContent === '진단 데이터 내보내기').click(); });
   const d = await dl;
   const js = JSON.parse(fs.readFileSync(await d.path(), 'utf8'));
-  ok('도구버전 ver9', js.도구버전 === 'ver9', js.도구버전);
+  ok('도구버전 ' + VER, js.도구버전 === VER, js.도구버전);
+
+  /* ── F-12 차수별 이수현황표 (ver10) ─────────────────────────────── */
+  group('F-12  차수별 이수현황표 — 차수 지정');
+  // 단위 검증(unit.js F-12)과 같은 구성: 기대값을 손으로 정해 둔 합성 데이터
+  const M12 = [['n1', '생활지원사', '신규자'], ['n2', '생활지원사', '신규자'], ['n3', '생활지원사', '신규자'], ['n4', '생활지원사', '신규자'],
+    ['d1', '전담사회복지사', '신규자'], ['d2', '광역전담사회복지사', '신규자'], ['e1', '생활지원사', '경력자'], ['e2', '생활지원사', '경력자'],
+    ['e3', '생활지원사', '경력자'], ['f1', '전담사회복지사', '경력자'], ['x1', '중간관리자', '신규자'], ['z1', '생활지원사', '신규자']];
+  const mem12 = csv(MH, M12.map((m, i) => [i + 1, '서울', '강남구', '역삼동', 'O1', '기관A', '사람' + m[0], m[0], m[1], '', '', '', '', '', '', 'N', 'Y', m[2], '정상']));
+  const NP = '[2026년 신규자 필수] ', KP = '[2026년 경력자 필수] ', SLP = '[2026년 선택] ';
+  const pr = (id, ut, name, rd) => ['직무교육(필수)', name, '8', '2026-02-01', '100', '90', '수료', '2026-03-10', '정상', id, '사람' + id, 'O1', '기관A', '서울', '강남구', ut, '', rd === '' ? '' : '2026 / ' + rd];
+  const sr = (id, ut, subj) => ['직무교육(선택)', SLP + subj, '3', '2026-02-01', '100', '90', '수료', '2026-03-10', '정상', id, '사람' + id, 'O1', '기관A', '서울', '강남구', ut, '', '2026 / 5'];
+  const NA = '노인 상담기법 이해와 활용(내러티브상담)', MO = '노인 상담기법 이해와 활용(동기강화상담)', BO = '노인 신체건강';
+  const stu12 = csv(SH, [
+    pr('n1', '생활지원사', NP + '생활지원사', 7), pr('n2', '생활지원사', NP + '생활지원사', 7), pr('n3', '생활지원사', NP + '생활지원사', 8), pr('n4', '생활지원사', NP + '생활지원사', 9),
+    pr('d1', '전담사회복지사', NP + '전담사회복지사', 9), pr('d2', '광역전담사회복지사', NP + '전담사회복지사', 9),
+    pr('e1', '생활지원사', KP + '생활지원사', 15), sr('e1', '생활지원사', NA), sr('e1', '생활지원사', MO), sr('e1', '생활지원사', BO),
+    pr('e2', '생활지원사', KP + '생활지원사', 16), sr('e2', '생활지원사', BO),
+    pr('e3', '생활지원사', KP + '생활지원사', 7), sr('e3', '생활지원사', NA), sr('e3', '생활지원사', MO), sr('e3', '생활지원사', BO),
+    pr('f1', '전담사회복지사', KP + '전담사회복지사', 21), sr('f1', '전담사회복지사', NA), sr('f1', '전담사회복지사', MO),
+    pr('x1', '중간관리자', NP + '생활지원사', 7), pr('z1', '생활지원사', NP + '생활지원사', '')
+  ]);
+  const readRT = () => page.evaluate(() => {
+    const c = document.getElementById('roundTableCard'); if (!c) return null;
+    return {
+      rows: [...c.querySelectorAll('table.rtable tbody tr')].map(tr => [...tr.querySelectorAll('td')].map(td => td.textContent.trim()).join('|')),
+      inputs: [...c.querySelectorAll('input[data-scope]')].map(i => i.dataset.scope + '=' + i.value),
+      on: [...c.querySelectorAll('.rchip.on')].map(b => b.dataset.round).join(','),
+      notes: [...c.querySelectorAll('.note')].map(n => n.textContent.replace(/\s+/g, ' ')).join(' / ')
+    };
+  });
+  const setSpec = (scope, v) => page.evaluate(([s, v]) => {
+    const i = document.querySelector('#roundTableCard input[data-scope="' + s + '"]'); i.value = v;
+    [...i.parentNode.querySelectorAll('button')].find(b => b.textContent === '적용').click();
+  }, [scope, v]);
+  await tab(page, '설정'); await page.waitForTimeout(300);
+  await page.evaluate(() => { [...document.querySelectorAll('#content .btn')].find(b => b.textContent === '수강데이터 비우기').click(); });
+  await page.waitForTimeout(700);
+  await upload(page, 'fileMember', 'm12.csv', mem12); await page.waitForFunction(() => window.__LMS_APP.members && window.__LMS_APP.members.length === 12);
+  await upload(page, 'fileStudent', 's12.csv', stu12);
+  await page.waitForFunction(() => window.__LMS_APP.result && window.__LMS_APP.studentCount === 21 && window.__LMS_APP.result.kpi.대상자 === 11);
+  await tab(page, '요약'); await page.waitForTimeout(400);
+  let rt = await readRT();
+  ok('요약 탭에 차수별 이수현황표', !!rt);
+  ok('기본값 = 이수자가 있는 차수 전부', rt.rows.map(r => r.split('|')[0]).join(',') === '7차,8차,9차,15차,21차,합계', rt.rows.join(' / '));
+  ok('기본 합계 행 (신규 생활·전담, 경력 생활·전담, 합계)', rt.rows[rt.rows.length - 1] === '합계|4|2|2|1|9', rt.rows[rt.rows.length - 1]);
+
+  await setSpec('same', '7-9, 15-21'); await page.waitForTimeout(300);
+  rt = await readRT();
+  ok('"7-9, 15-21" → 10개 차수 + 합계 행', rt.rows.length === 11 && rt.rows[0].startsWith('7차|') && rt.rows[9].startsWith('21차|'), rt.rows.length);
+  ok('7차 행 = 신규생활 2 · 경력생활 1', rt.rows[0] === '7차|2|0|1|0|3', rt.rows[0]);
+  ok('9차 행 = 광역전담 포함 신규전담 2', rt.rows[2] === '9차|1|2|0|0|3', rt.rows[2]);
+  ok('이수자 없는 16차는 0', rt.rows[4] === '16차|0|0|0|0|0', rt.rows[4]);
+  ok('입력칸이 정리된 표기로 바뀜', rt.inputs[0] === 'same=7~9, 15~21', rt.inputs[0]);
+  ok('번호 버튼에 선택 상태 반영', rt.on === '7,8,9,15,16,17,18,19,20,21', rt.on);
+  ok('지정 차수가 설정에 저장', JSON.stringify(await page.evaluate(() => window.__LMS_APP.config.roundTable.same)) === '[7,8,9,15,16,17,18,19,20,21]');
+  ok('선택 차시가 부족한 경력자(16차) 안내', /경력자 1명/.test(rt.notes), rt.notes.slice(0, 160));
+
+  await page.evaluate(() => document.querySelector('#roundTableCard .rchip[data-round="16"]').click()); await page.waitForTimeout(250);
+  rt = await readRT();
+  ok('번호 버튼으로 빼기', rt.rows.length === 10 && !rt.rows.some(r => r.startsWith('16차|')));
+  await page.evaluate(() => document.querySelector('#roundTableCard .rchip[data-round="16"]').click()); await page.waitForTimeout(250);
+  rt = await readRT();
+  ok('번호 버튼으로 다시 넣기', rt.rows.some(r => r.startsWith('16차|')));
+
+  await setSpec('same', 'abc, 7'); await page.waitForTimeout(250);
+  rt = await readRT();
+  ok('잘못된 입력은 알리고 나머지만 반영', /반영하지 못한 입력: abc/.test(rt.notes) && rt.rows.join(' / ') === '7차|2|0|1|0|3 / 합계|2|0|1|0|3', rt.rows.join(' / '));
+
+  group('F-12  엑셀 다운로드 (이미지와 같은 2단 머리글)');
+  await setSpec('same', '7-9, 15-21'); await page.waitForTimeout(250);
+  await page.evaluate(() => {
+    const o = XLSX.writeFile;
+    XLSX.writeFile = function (wb, fn) { const ws = wb.Sheets[wb.SheetNames[0]]; window.__lastX = { fn: fn, aoa: XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' }), merges: ws['!merges'] || [] }; return o.apply(XLSX, arguments); };
+  });
+  const dlRT = page.waitForEvent('download');
+  await page.evaluate(() => [...document.querySelectorAll('#roundTableCard .head button')].find(b => b.textContent === '엑셀 다운로드').click());
+  await dlRT;
+  const X = await page.evaluate(() => window.__lastX);
+  ok('파일명', X.fn === '차수별_이수현황표.xlsx', X.fn);
+  ok('머리말에 지정 차수 명시', X.aoa[1][0] === '지정 차수: 7~9, 15~21차', X.aoa[1][0]);
+  ok('머리글 2단 + 병합 4곳', X.merges.length === 4 && X.aoa[5].join('|') === '차수|신규자||경력자||합계' && X.aoa[6].join('|') === '|생활지원사|전담사회복지사|생활지원사|전담사회복지사|', X.aoa[5].join('|') + ' / ' + X.aoa[6].join('|'));
+  const lastRow = X.aoa[X.aoa.length - 1];
+  ok('본문 10행 + 합계 행이 숫자로', X.aoa.length === 7 + 11 && lastRow.join('|') === '합계|4|2|2|1|9' && typeof lastRow[5] === 'number', lastRow.join('|'));
+
+  group('F-12  신규자·경력자 차수 따로 지정');
+  await page.evaluate(() => { const s = document.querySelector('#roundTableCard select'); s.value = 'split'; s.dispatchEvent(new Event('change')); });
+  await page.waitForTimeout(300);
+  rt = await readRT();
+  ok('입력칸이 신규자·경력자 2개로', rt.inputs.map(x => x.split('=')[0]).join(',') === '신규자,경력자', rt.inputs.join(','));
+  ok('기본값 = 각자 이수자가 있는 차수', rt.inputs.join(',') === '신규자=7~9,경력자=7, 15, 21', rt.inputs.join(','));
+  await setSpec('신규자', '7-9'); await page.waitForTimeout(250);
+  await setSpec('경력자', '15~'); await page.waitForTimeout(250);
+  rt = await readRT();
+  ok('열린 범위 "15~" → 최신 21차까지', rt.inputs[1] === '경력자=15~21', rt.inputs[1]);
+  ok('7차 행: 경력자 칸은 해당 없음(-)', rt.rows[0] === '7차|2|0|-|-|2', rt.rows[0]);
+  ok('15차 행: 신규자 칸은 해당 없음(-)', rt.rows[3] === '15차|-|-|1|0|1', rt.rows[3]);
+  ok('합계에서 경력자 7차 이수자 제외', rt.rows[rt.rows.length - 1] === '합계|4|2|1|1|8', rt.rows[rt.rows.length - 1]);
+
+  group('F-12  저장·일관성·인쇄');
+  await page.reload();
+  await page.waitForFunction(() => window.__LMS_APP && window.__LMS_APP.members && window.__LMS_APP.members.length === 12);
+  await upload(page, 'fileStudent', 's12.csv', stu12);
+  await page.waitForFunction(() => window.__LMS_APP.result && window.__LMS_APP.studentCount === 21);
+  await tab(page, '요약'); await page.waitForTimeout(400);
+  rt = await readRT();
+  ok('새로고침 후에도 지정 방식·차수 유지', rt.inputs.join(',') === '신규자=7~9,경력자=15~21' && rt.rows[rt.rows.length - 1] === '합계|4|2|1|1|8', rt.inputs.join(','));
+  const cross = await page.evaluate(async () => {
+    const A = window.__LMS_APP; A.config.period = { mode: 'round', from: '7', to: '9' };
+    [...document.querySelectorAll('.tab')].find(b => b.textContent.includes('요약')).click();
+    await new Promise(r => setTimeout(r, 300));
+    const card = [...document.querySelectorAll('#content .card')].find(c => c.querySelector('h2') && c.querySelector('h2').textContent === '이수율 현황표');
+    const trs = [...card.querySelectorAll('tbody tr')], num = td => +td.textContent.replace(/,/g, '');
+    const t = LMS.roundTable(A.result.byRound, [7, 8, 9]).total;
+    return {
+      현황표: [num(trs[0].children[1]), num(trs[0].children[2]), num(trs[1].children[1]), num(trs[1].children[2])],
+      차수표: [t['신규자|전담사회복지사'], t['경력자|전담사회복지사'], t['신규자|생활지원사'], t['경력자|생활지원사']]
+    };
+  });
+  ok('이수율 현황표(산출기간 7~9차)와 같은 숫자', cross.현황표.join() === cross.차수표.join(), JSON.stringify(cross));
+  await page.emulateMedia({ media: 'print' });
+  const pv = await page.evaluate(() => {
+    const c = document.getElementById('roundTableCard'), vis = e => !!e && getComputedStyle(e).display !== 'none';
+    return { 번호: vis(c.querySelector('.rchips')), 입력: vis(c.querySelector('.rspec')), 표: vis(c.querySelector('table.rtable')), 지정차수: vis(c.querySelector('.note.info')) };
+  });
+  await page.emulateMedia({ media: 'screen' });
+  ok('인쇄 시 입력·번호는 숨기고 표·지정 차수는 출력', !pv.번호 && !pv.입력 && pv.표 && pv.지정차수, JSON.stringify(pv));
+  await tab(page, '설정'); await page.waitForTimeout(300);
+  await page.evaluate(() => { [...document.querySelectorAll('#content .btn')].find(b => b.textContent.includes('기본값으로 초기화')).click(); });
+  await page.waitForTimeout(900);
+  const rtCfg = await page.evaluate(() => window.__LMS_APP.config.roundTable);
+  ok('이수 기준 초기화해도 지정 차수 보존', !!rtCfg && rtCfg.mode === 'split' && (rtCfg.경력자 || []).join(',') === '15,16,17,18,19,20,21', JSON.stringify(rtCfg));
 
   group('D-15  원데이터 HTML 주입 방어');
   const memX = csv(MH, [[1, '서울', '강남구', '동', 'O1', '<img src=x onerror="window.__X1=1">', '<img src=x onerror="window.__X2=1">', 'W1', '생활지원사', '', '', '', '', '', '', 'N', 'Y', '신규자', '정상']]);

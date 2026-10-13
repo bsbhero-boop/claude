@@ -1,5 +1,5 @@
 /* =============================================================================
- *  배움터 LMS 직무교육 통계 - 계산 엔진 (compute.js)  ver9
+ *  배움터 LMS 직무교육 통계 - 계산 엔진 (compute.js)  ver10
  *  순수 함수 모듈. 브라우저(window.LMS)·Web Worker·Node 모두에서 동작.
  *  입력: memberRows[], studentRows[]  (각 행은 한글 컬럼명을 key로 갖는 객체)
  *  UI 의존 없음 — 이 파일은 Worker에 그대로 실려 백그라운드에서 실행된다.
@@ -7,7 +7,7 @@
 (function (root) {
   'use strict';
 
-  var VERSION = 'ver9';
+  var VERSION = 'ver10';
 
   // 선택 과목별 차시 (계획서 '교육과목' 기준). 키는 정규화된 과목명.
   var DEFAULT_CHASI = {
@@ -22,6 +22,9 @@
     '가사지원서비스의 이해 및 실제': 2, '동행지원서비스의 이해 및 실제': 2,
     '선임생활지원사 직무 및 역할': 3, '사례관리 이해와 실제': 2, '관계형성 및 조직관리': 2
   };
+
+  // [ver10] 차수별 이수현황표의 열 순서. 키는 판정에 쓰는 '경력|직군' 표기를 그대로 쓴다.
+  var ROUND_GROUPS = ['신규자|생활지원사', '신규자|전담사회복지사', '경력자|생활지원사', '경력자|전담사회복지사'];
 
   // 통계 대상 시도(16개). 이 목록 외(중앙·미상 등)는 모든 통계에서 제외.
   var DEFAULT_SIDO = ['서울', '경기', '인천', '부산', '대전', '대구', '울산', '광주', '강원', '경남', '경북', '전남', '전북', '충남', '충북', '제주'];
@@ -443,13 +446,26 @@
     duplicateRows.sort(function (a, b) { return b.수료횟수 - a.수료횟수 || (a.ID < b.ID ? -1 : 1); });
 
     // [ver9] 차수별 이수 추이(F-08) — 이수자를 이수 차수 기준으로 묶어 누적한다.
+    // [ver10] 같은 차수의 이수자를 신규·경력 × 직군(ROUND_GROUPS)으로도 나눠 둔다(F-12).
     var ruleP = persons.filter(function (p) { return p.기준정의; });
     var roundMap = new Map();
-    ruleP.forEach(function (p) { if (!p.이수 || p.차수 == null) return; roundMap.set(p.차수, (roundMap.get(p.차수) || 0) + 1); });
+    ruleP.forEach(function (p) {
+      if (!p.이수 || p.차수 == null) return;
+      var e = roundMap.get(p.차수);
+      if (!e) { e = { n: 0, g: {} }; ROUND_GROUPS.forEach(function (g) { e.g[g] = 0; }); roundMap.set(p.차수, e); }
+      e.n++;
+      var gk = p.경력 + '|' + p.직군정규화;
+      if (gk in e.g) e.g[gk]++;
+    });
     var byRound = []; var rkeys = []; roundMap.forEach(function (v, k) { rkeys.push(k); });
     rkeys.sort(function (a, b) { return a - b; });
     var cum = 0;
-    rkeys.forEach(function (k) { cum += roundMap.get(k); byRound.push({ 차수: k, 이수자: roundMap.get(k), 누적이수자: cum, 누적이수율: rate(cum, ruleP.length) }); });
+    rkeys.forEach(function (k) {
+      var e = roundMap.get(k); cum += e.n;
+      var row = { 차수: k, 이수자: e.n, 누적이수자: cum, 누적이수율: rate(cum, ruleP.length) };
+      ROUND_GROUPS.forEach(function (g) { row[g] = e.g[g]; });
+      byRound.push(row);
+    });
 
     var unknownIDs = []; unknownIDMap.forEach(function (v) { unknownIDs.push(v); });
     unknownIDs.sort(function (a, b) { return b.건수 - a.건수; });
@@ -678,12 +694,94 @@
     out.push(s === p ? '' + s : s + '~' + p); return out.join(', ');
   }
 
+  /* ---- [ver10] 차수별 이수현황표(F-12) ------------------------------------
+   * 사용자가 고른 차수만 모아 이수자를 신규·경력 × 직군으로 보여 준다.
+   * 숫자는 analyze()의 byRound를 그대로 쓰므로 산출기간·추이 그래프와 차수 기준이 같다. */
+  var MAX_ROUND = 999;
+
+  function uniqNums(arr) {
+    var seen = {}, out = [];
+    (arr || []).forEach(function (n) { n = +n; if (isFinite(n) && !seen[n]) { seen[n] = 1; out.push(n); } });
+    return out.sort(function (a, b) { return a - b; });
+  }
+
+  // 차수 지정 문자열 → 정렬된 차수 배열.
+  //  "7-9, 15~21" · "7,8,9" · "7차 8차" · "15~"(15차부터 maxRound까지) · "~3"(1~3차)를 받는다.
+  //  반영하지 못한 조각은 버리지 않고 ignored로 돌려줘 화면에서 알린다.
+  function parseRoundSpec(text, maxRound) {
+    var max = (maxRound != null && isFinite(maxRound) && maxRound > 0) ? Math.min(Math.floor(maxRound), MAX_ROUND) : null;
+    var s = S(text).replace(/차/g, ' ').replace(/[~∼〜～–—−]/g, '-').replace(/\s*-\s*/g, '-');
+    var picked = [], ignored = [];
+    s.split(/[\s,，、;]+/).forEach(function (tok) {
+      if (!tok) return;
+      var a, b, m = tok.match(/^(\d*)-(\d*)$/);
+      if (/^\d+$/.test(tok)) { a = b = parseInt(tok, 10); }
+      else if (m && (m[1] || m[2])) {
+        a = m[1] ? parseInt(m[1], 10) : 1;
+        b = m[2] ? parseInt(m[2], 10) : max;
+        if (b == null || (!m[2] && a > b)) { ignored.push(tok); return; } // "15~"인데 최신 차수를 모르거나 넘어섬
+        if (a > b) { var t = a; a = b; b = t; }
+      } else { ignored.push(tok); return; }
+      if (a < 1 || b > MAX_ROUND) { ignored.push(tok); return; }
+      for (var n = a; n <= b; n++) picked.push(n);
+    });
+    return { rounds: uniqNums(picked), ignored: ignored };
+  }
+
+  // 차수 배열 → "7~9, 15~21"
+  function formatRounds(arr) { return compactRanges(uniqNums(arr)); }
+
+  // 이수자가 1명 이상 있는 차수. career('신규자'|'경력자')를 주면 그 경력 구분만 본다.
+  function roundsWithDone(byRound, career) {
+    return (byRound || []).filter(function (r) {
+      return ROUND_GROUPS.some(function (g) { return (!career || g.indexOf(career + '|') === 0) && r[g] > 0; });
+    }).map(function (r) { return r.차수; });
+  }
+
+  // 데이터에 들어 있는 필수과정의 최신 차수(신규자·경력자별). coverage() 결과에서 읽는다.
+  function maxRoundByCareer(cov) {
+    var out = { 신규자: 0, 경력자: 0 };
+    ((cov && cov.byCourse) || []).forEach(function (c) {
+      if (c.카테고리 !== '직무교육(필수)') return;
+      var k = pilMeta(c.과정명).경력;
+      if (k && c.최신차수 > out[k]) out[k] = c.최신차수;
+    });
+    return out;
+  }
+
+  // byRound + 지정 차수 → 표. picks는 배열(신규·경력 공통) 또는 { 신규자: [], 경력자: [] }.
+  //  어느 경력 구분에 지정되지 않은 차수의 칸은 null(해당 없음)로 두고 합계에서 뺀다.
+  function roundTable(byRound, picks) {
+    var pk = Array.isArray(picks) ? { 신규자: picks, 경력자: picks } : (picks || {});
+    var sets = {}, all = [], used = {};
+    ['신규자', '경력자'].forEach(function (c) {
+      sets[c] = {}; used[c] = false;
+      uniqNums(pk[c]).forEach(function (n) { sets[c][n] = 1; all.push(n); used[c] = true; });
+    });
+    var idx = {}; (byRound || []).forEach(function (r) { idx[r.차수] = r; });
+    var total = { 차수: '합계', 합계: 0 };
+    ROUND_GROUPS.forEach(function (g) { total[g] = used[g.split('|')[0]] ? 0 : null; });
+    var rows = uniqNums(all).map(function (n) {
+      var src = idx[n], row = { 차수: n, 합계: 0 };
+      ROUND_GROUPS.forEach(function (g) {
+        if (!sets[g.split('|')[0]][n]) { row[g] = null; return; }
+        var v = (src && src[g]) || 0;
+        row[g] = v; row.합계 += v; total[g] += v;
+      });
+      total.합계 += row.합계;
+      return row;
+    });
+    return { groups: ROUND_GROUPS.slice(), rows: rows, total: total, used: used };
+  }
+
   var API = {
     VERSION: VERSION,
     analyze: analyze, coverage: coverage, diagnose: diagnose,
     DEFAULT_CONFIG: DEFAULT_CONFIG, DEFAULT_CHASI: DEFAULT_CHASI, DEFAULT_SIDO: DEFAULT_SIDO,
     normDirect: normDirect, selBase: selBase, pilMeta: pilMeta, courseType: courseType,
-    normDate: normDate, parseRound: parseRound, parseYear: parseYear, hasVal: hasVal, isSenior: isSenior
+    normDate: normDate, parseRound: parseRound, parseYear: parseYear, hasVal: hasVal, isSenior: isSenior,
+    ROUND_GROUPS: ROUND_GROUPS, parseRoundSpec: parseRoundSpec, formatRounds: formatRounds,
+    roundsWithDone: roundsWithDone, maxRoundByCareer: maxRoundByCareer, roundTable: roundTable
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = API;
   root.LMS = API;
