@@ -18,7 +18,7 @@ import {
 } from './constants';
 import type { Player, TeamState } from './entities';
 import { clamp, rand } from './math';
-import type { Match } from './match';
+import { cutinDuelK, type Match } from './match';
 import type { Particle } from './particles';
 import { SPECIAL_LABEL } from '../data/teams';
 
@@ -31,6 +31,8 @@ const BODY_SCALE = 1.3;
 interface Drawable {
   d: number;
   draw: () => void;
+  p?: Player;
+  q?: Proj;
 }
 
 export class Renderer {
@@ -43,20 +45,36 @@ export class Renderer {
   wide = false;
   /** 터치 조작 화면: HUD를 위쪽으로 모으고 키 안내를 숨긴다 */
   touchMode = false;
+  private lookShift = 0;
+  private frameDt = 1 / 60;
+  /** 작은 화면에서는 선수·공을 조금 더 크게 그려 알아보기 쉽게 */
+  bodyScale = BODY_SCALE;
+  ballScale = 1.9;
   private crowdPattern: CanvasPattern | null = null;
   private crowdKey = '';
+  private vignetteKey = '';
+  private vignette: HTMLCanvasElement | null = null;
+  private scratch: Proj = { x: 0, y: 0, d: 0, s: 0 };
+  private scratch2: Proj = { x: 0, y: 0, d: 0, s: 0 };
+  private baseT: DOMMatrix | null = null;
   private sprites = new Map<string, HTMLCanvasElement>();
   private dragonTrail: { x: number; y: number; z: number }[] = [];
   private time = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
-    this.ctx = canvas.getContext('2d')!;
+    this.ctx = canvas.getContext('2d', { alpha: false })!;
     this.resize();
   }
 
+  /** 해상도 상한 (느린 기기에서 자동으로 낮춘다) */
+  dprCap = 2;
+
+  /** 컷인·필살 추격 장면 동안의 임시 해상도 상한 */
+  cineCap = 9;
+
   resize() {
-    this.dpr = Math.min(window.devicePixelRatio || 1, 2);
+    this.dpr = Math.min(window.devicePixelRatio || 1, this.dprCap, this.cineCap);
     const r = this.canvas.getBoundingClientRect();
     this.w = Math.max(320, r.width);
     this.h = Math.max(240, r.height);
@@ -73,6 +91,8 @@ export class Renderer {
     const c = this.cam;
     c.setViewport(this.w, this.h);
     if (m.cam.mode === 'penalty') {
+      this.bodyScale = BODY_SCALE;
+      this.ballScale = 1.9;
       c.lookAt(PEN_SPOT + 15, CY + 3.2, 4.3, 0, CY, 0.9);
       c.focal = Math.min(this.h * 2.3, this.w * 1.6);
       return;
@@ -80,21 +100,51 @@ export class Renderer {
     const z = m.cam.zoom;
     const tx = m.cam.x;
     const ty = m.cam.y;
-    const camY = PITCH_W + 33;
-    const camZ = 33;
+    const portrait = this.h > this.w;
+    // 세로 화면은 화각이 위아래로 넓어 관중석만 보이기 쉬우므로 더 내려다보는 각도로
+    const camY = PITCH_W + (portrait ? 26 : 33);
+    const camZ = portrait ? 46 : 33;
     const lookY = clamp(ty, 8, 60) * 0.88 + CY * 0.12;
     c.lookAt(tx, camY, camZ, tx, lookY, 0);
-    const portrait = this.h > this.w;
-    c.focal = (portrait ? this.w * 2.0 : Math.min(this.h * 2.45, this.w * 1.5)) * z * (this.wide ? 0.78 : 1);
+    const small = Math.min(this.w, this.h) < 520;
+    const k = m.cine;
+    this.bodyScale = small ? BODY_SCALE * 1.2 : BODY_SCALE;
+    this.ballScale = small ? 2.3 : 1.9;
+    // 휴대폰: 조금 더 당겨서 선수가 보이게 (가로 ≈ 55m, 세로 ≈ 32m 폭)
+    const base = portrait ? this.w * 2.3 : small ? Math.min(this.h * 2.9, this.w * 1.6) : Math.min(this.h * 2.45, this.w * 1.5);
+    c.focal = base * z * (this.wide ? 0.78 : 1);
     // 세로 화면/터치 화면에서는 시점을 위로 올려 아래쪽 컨트롤에 공이 가리지 않게
     if (portrait) c.cy = this.h * 0.38;
     else if (this.touchMode) c.cy = this.h * 0.46;
+    // 터치 가로 화면: 오른쪽 골문을 공격할 때 골문이 버튼 묶음에 가리지 않도록 시점을 오른쪽으로
+    if (this.touchMode && !portrait && m.humanTeam) {
+      const ht = m.humanTeam;
+      const tgt = ht.u(m.ball.x) > 0.6 ? (ht.dir > 0 ? -0.09 : 0.03) : 0;
+      this.lookShift += (tgt - this.lookShift) * Math.min(1, this.frameDt * 2.2);
+      c.cx = this.w * (0.5 + this.lookShift);
+    }
+    // 시네마틱 카메라와 혼합
+    if (k.w > 0.01) {
+      const w = k.w;
+      const L = (a: number, b: number) => a + (b - a) * w;
+      c.lookAt(L(tx, k.px), L(camY, k.py), L(camZ, k.pz), L(tx, k.tx), L(lookY, k.ty), L(0, k.tz));
+      // 세로 화면: 하늘·관중이 덜 보이게 더 당기고 지평선을 위로
+      c.focal = L(c.focal, portrait ? this.w * 1.6 : Math.min(this.h * 1.5, this.w * 1.2));
+      c.cy = L(c.cy, this.h * (portrait ? 0.58 : 0.5));
+      c.cx = L(c.cx, this.w * 0.5);
+      // 가까운 시점에서는 휴대폰용 과장(큰 선수·공)을 걷어낸다
+      this.bodyScale = L(this.bodyScale, BODY_SCALE);
+      this.ballScale = L(this.ballScale, 1.4);
+    }
+    // 필살 발사 순간 화각을 살짝 당긴다
+    if (m.fx.punch > 0) c.focal *= 1 + 0.12 * (m.fx.punch / 0.15);
   }
 
   // ─────────────────────────────── 메인 ───────────────────────────────
 
   render(m: Match, dt: number) {
     this.time += dt;
+    this.frameDt = dt;
     const ctx = this.ctx;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     this.setupCamera(m);
@@ -116,13 +166,23 @@ export class Renderer {
     this.drawSelection(m);
     this.drawEntities(m);
     this.drawParticles(m);
+    // 필살 슛의 빛에 공이 묻히지 않도록 공 심을 한 번 더 또렷하게
+    if (m.ball.special) {
+      const b = m.ball;
+      const bq = this.proj(b.x, b.y, b.z + BALL_R);
+      if (bq) this.drawBallCore(bq, b.rot);
+    }
     this.drawRings(m, false);
     this.drawBolts(m);
     this.drawSpecialExtras(m);
     this.drawPopups(m);
+    this.drawSaveDuel(m, 'ring');
     ctx.restore();
     this.drawOverlays(m);
-    if (m.phase === 'shootout') this.drawShootoutHud(m);
+    this.drawSaveDuel(m, 'text');
+    if (m.isDemo) {
+      // 타이틀 배경 데모: HUD 없이 화면만
+    } else if (m.phase === 'shootout') this.drawShootoutHud(m);
     else this.drawHud(m);
     if (m.cutin) this.drawCutin(m);
     this.drawBanner(m);
@@ -410,7 +470,9 @@ export class Renderer {
       if (!sp) continue;
       const c = this.proj((x0 + x1) / 2, y, 0.5);
       if (!c) continue;
-      const fs = clamp(c.s * 0.62, 6, 40);
+      // 글꼴 크기를 정수로: 매 프레임 새 크기면 글자를 다시 그려 프레임이 끊긴다
+      const fs = Math.round(clamp(c.s * 0.62, 6, 40));
+      if (fs < 7) continue;
       ctx.font = `${fs}px ${FONT_DISPLAY}`;
       ctx.fillStyle = '#ffffff';
       ctx.textAlign = 'center';
@@ -532,7 +594,38 @@ export class Renderer {
 
   private drawSelection(m: Match) {
     const ctx = this.ctx;
-    if (m.phase === 'shootout' || m.phase === 'replay') return;
+    if (m.phase === 'shootout' || m.phase === 'replay' || m.cine.w > 0.3) return;
+    // 띄운 패스·크로스의 낙하 지점과 받을 선수 표시 (사람 팀이 관련된 공만)
+    const b = m.ball;
+    const pass = b.pass;
+    if (pass && !b.owner && m.phase === 'play' && (pass.from.team.human || m.opp(pass.from.team).human)) {
+      const col = pass.from.team.human ? '255,225,77' : '255,110,110';
+      if (pass.lofted && b.z > 0.4) {
+        const q = this.proj(pass.tx, pass.ty, 0.02);
+        if (q) {
+          const pr = 0.55 + Math.sin(this.time * 10) * 0.12;
+          ctx.strokeStyle = `rgba(${col},0.8)`;
+          ctx.lineWidth = Math.max(1.5, 0.06 * q.s);
+          ctx.beginPath();
+          ctx.ellipse(q.x, q.y, pr * q.s, pr * 0.4 * q.s, 0, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.ellipse(q.x, q.y, 0.12 * q.s, 0.05 * q.s, 0, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
+      const to = pass.to;
+      if (to && to.team.human && !to.human) {
+        const q = this.proj(to.x, to.y, 0.02);
+        if (q) {
+          ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+          ctx.lineWidth = Math.max(1.2, 0.05 * q.s);
+          ctx.beginPath();
+          ctx.ellipse(q.x, q.y, 0.65 * q.s, 0.26 * q.s, 0, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
+    }
     for (const t of m.teams) {
       if (!t.human || !t.controlled) continue;
       const p = t.controlled;
@@ -544,6 +637,23 @@ export class Renderer {
       ctx.beginPath();
       ctx.ellipse(q.x, q.y, 0.75 * q.s * pulse, 0.3 * q.s * pulse, 0, 0, Math.PI * 2);
       ctx.stroke();
+      // 타이밍 피니시: 줄어드는 고리가 초록 구간에 들어왔을 때 슛 버튼을 다시 누르면 PERFECT
+      const k = p.kick;
+      if (k && k.kind === 'shot' && p.state === 'kick' && k.timing === 'none') {
+        const prog = clamp(k.t / Math.max(0.05, k.windup), 0, 1);
+        const inWindow = k.t >= k.windup - 0.13;
+        const r = 2.2 - prog * 1.45;
+        ctx.strokeStyle = 'rgba(61,255,143,0.55)';
+        ctx.lineWidth = Math.max(1.5, 0.05 * q.s);
+        ctx.beginPath();
+        ctx.ellipse(q.x, q.y, 0.75 * q.s, 0.3 * q.s, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.strokeStyle = inWindow ? '#3dff8f' : 'rgba(255,255,255,0.85)';
+        ctx.lineWidth = Math.max(2, 0.08 * q.s);
+        ctx.beginPath();
+        ctx.ellipse(q.x, q.y, r * q.s, r * 0.4 * q.s, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
       // 진행 방향 화살표
       const a = this.proj(p.x + Math.cos(p.facing) * 1.25, p.y + Math.sin(p.facing) * 1.25, 0.02);
       if (a) {
@@ -566,11 +676,29 @@ export class Renderer {
       for (const p of t.active) {
         const q = this.proj(p.x, p.y, 0);
         if (!q) continue;
-        list.push({ d: q.d, draw: () => this.drawPlayer(m, p, q) });
+        list.push({ d: q.d, p, q, draw: () => this.drawPlayer(m, p, q) });
       }
     const b = m.ball;
     const bq = this.proj(b.x, b.y, b.z + BALL_R);
     if (bq) list.push({ d: bq.d - 0.05, draw: () => this.drawBall(m, bq) });
+    // 시네마틱 시점: 카메라와 공 사이에서 공을 가리는 선수는 반투명하게
+    if (bq && m.cine.w > 0.5) {
+      for (const it of list) {
+        const p = it.p;
+        if (!p || it.d >= bq.d || it.d < 4) continue;
+        const q = it.q!;
+        const half = 0.5 * q.s * this.bodyScale;
+        const top = q.y - 2 * q.s * this.bodyScale;
+        if (Math.abs(q.x - bq.x) < half + 6 && bq.y > top - 6 && bq.y < q.y + 6) {
+          const draw = it.draw;
+          it.draw = () => {
+            this.ctx.globalAlpha = 0.3;
+            draw();
+            this.ctx.globalAlpha = 1;
+          };
+        }
+      }
+    }
     for (const gx of [0, PITCH_L]) {
       const far = this.proj(gx, CY - GOAL_HALF_W, 1);
       const near = this.proj(gx, CY + GOAL_HALF_W, 1);
@@ -591,7 +719,7 @@ export class Renderer {
 
   drawPlayer(m: Match, p: Player, q: Proj, ctxOverride?: CanvasRenderingContext2D, forceScale?: number) {
     const ctx = ctxOverride ?? this.ctx;
-    const s = (forceScale ?? q.s) * BODY_SCALE;
+    const s = (forceScale ?? q.s) * (forceScale ? BODY_SCALE : this.bodyScale);
     if (s < 1.5) return;
     const kit = this.kitOf(p);
     // 화면상 방향
@@ -814,7 +942,7 @@ export class Renderer {
       ctx.restore();
     }
     // 레드/옐로 카드 표시 없음, 조작 선수 이름표
-    if (p.human && !forceScale && m.phase !== 'replay' && m.phase !== 'shootout') {
+    if (p.human && !forceScale && m.phase !== 'replay' && m.phase !== 'shootout' && m.cine.w < 0.3) {
       const ny = q.y - lift - 2.25 * s;
       ctx.fillStyle = '#ffe14d';
       ctx.beginPath();
@@ -822,7 +950,7 @@ export class Renderer {
       ctx.lineTo(q.x + 6, ny - 9);
       ctx.lineTo(q.x, ny - 1);
       ctx.fill();
-      ctx.font = `13px ${FONT_DISPLAY}`;
+      ctx.font = `${this.touchMode ? 11 : 13}px ${FONT_DISPLAY}`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'bottom';
       const label = `${p.def.num} ${p.def.name}`;
@@ -867,14 +995,33 @@ export class Renderer {
     return Math.abs(dx) < 0.5 ? (lateral > 0 ? 1 : -1) : Math.sign(dx);
   }
 
+  private drawBallCore(q: Proj, rot: number) {
+    const ctx = this.ctx;
+    const r = Math.max(2.2, BALL_R * this.ballScale * q.s);
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(q.x, q.y, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#20232c';
+    ctx.beginPath();
+    ctx.arc(q.x + Math.cos(rot * 0.5) * r * 0.45, q.y + Math.sin(rot * 0.35) * r * 0.35, r * 0.28, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    ctx.lineWidth = Math.max(1, r * 0.12);
+    ctx.beginPath();
+    ctx.arc(q.x, q.y, r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
   private drawBall(m: Match, q: Proj) {
     const ctx = this.ctx;
     const b = m.ball;
-    const r = Math.max(2.2, BALL_R * 1.9 * q.s);
+    const r = Math.max(2.2, BALL_R * this.ballScale * q.s);
     if (b.special) {
       const col = SPECIAL_COLORS[b.special];
       const sprite = this.glowSprite(col[0]);
-      const gr = r * (b.special === 'meteor' ? 9 : 6) * (1 + Math.sin(this.time * 30) * 0.1);
+      // 빛은 화면 크기에 비례해 상한을 둔다 (가까운 시점에서 화면을 하얗게 덮지 않게)
+      const gr = Math.min(r * (b.special === 'meteor' ? 9 : 6), Math.min(this.w, this.h) * 0.16) * (1 + Math.sin(this.time * 30) * 0.1);
       ctx.save();
       ctx.globalCompositeOperation = 'lighter';
       ctx.drawImage(sprite, q.x - gr, q.y - gr, gr * 2, gr * 2);
@@ -966,20 +1113,41 @@ export class Renderer {
     const list = m.particles.list;
     // 일반 합성 먼저 (연기, 꽃가루)
     ctx.save();
+    this.baseT = ctx.getTransform();
+    const q = this.scratch;
     for (const p of list) {
       if (p.additive) continue;
-      const q = this.proj(p.x, p.y, p.z);
-      if (!q) continue;
+      if (!this.cam.project(p.x, p.y, p.z, q)) continue;
       this.drawParticle(p, q);
     }
     ctx.globalCompositeOperation = 'lighter';
     for (const p of list) {
       if (!p.additive) continue;
-      const q = this.proj(p.x, p.y, p.z);
-      if (!q) continue;
+      if (!this.cam.project(p.x, p.y, p.z, q)) continue;
       this.drawParticle(p, q);
     }
+    this.baseT = null;
     ctx.restore();
+  }
+
+  /** save/translate/rotate/restore 대신 변환 행렬을 직접 지정 (파티클 수백 개에서 훨씬 싸다) */
+  private rotAt(x: number, y: number, r: number) {
+    const T = this.baseT;
+    if (!T) {
+      this.ctx.save();
+      this.ctx.translate(x, y);
+      this.ctx.rotate(r);
+      return;
+    }
+    const c = Math.cos(r);
+    const s = Math.sin(r);
+    this.ctx.setTransform(T.a * c + T.c * s, T.b * c + T.d * s, -T.a * s + T.c * c, -T.b * s + T.d * c, T.a * x + T.c * y + T.e, T.b * x + T.d * y + T.f);
+  }
+
+  private unrot() {
+    const T = this.baseT;
+    if (T) this.ctx.setTransform(T);
+    else this.ctx.restore();
   }
 
   private drawParticle(p: Particle, q: Proj) {
@@ -1009,9 +1177,7 @@ export class Renderer {
       case 'shard': {
         ctx.globalAlpha = Math.min(1, k * 1.5);
         ctx.fillStyle = p.color;
-        ctx.save();
-        ctx.translate(q.x, q.y);
-        ctx.rotate(p.rot);
+        this.rotAt(q.x, q.y, p.rot);
         ctx.beginPath();
         ctx.moveTo(0, -sz);
         ctx.lineTo(sz * 0.45, 0);
@@ -1019,25 +1185,21 @@ export class Renderer {
         ctx.lineTo(-sz * 0.45, 0);
         ctx.closePath();
         ctx.fill();
-        ctx.restore();
+        this.unrot();
         break;
       }
       case 'confetti': {
         ctx.globalAlpha = Math.min(1, k * 2);
         ctx.fillStyle = p.color;
-        ctx.save();
-        ctx.translate(q.x, q.y);
-        ctx.rotate(p.rot);
+        this.rotAt(q.x, q.y, p.rot);
         ctx.fillRect(-sz, -sz * 0.5 * Math.abs(Math.sin(p.rot * 2)), sz * 2, sz * Math.abs(Math.sin(p.rot * 2)) + 0.5);
-        ctx.restore();
+        this.unrot();
         break;
       }
       case 'star': {
         ctx.globalAlpha = Math.min(1, k * 1.5);
         ctx.fillStyle = p.color;
-        ctx.save();
-        ctx.translate(q.x, q.y);
-        ctx.rotate(p.rot);
+        this.rotAt(q.x, q.y, p.rot);
         ctx.beginPath();
         for (let i = 0; i < 8; i++) {
           const r = i % 2 ? sz * 0.35 : sz * 1.2;
@@ -1046,7 +1208,7 @@ export class Renderer {
         }
         ctx.closePath();
         ctx.fill();
-        ctx.restore();
+        this.unrot();
         break;
       }
       case 'leaf': {
@@ -1060,6 +1222,20 @@ export class Renderer {
       }
       default: {
         ctx.globalAlpha = Math.min(1, k * 1.5);
+        if (p.kind === 'spark' && sz > 1.5) {
+          // 불꽃 튀김은 진행 방향으로 늘어진 둥근 선
+          const t2 = this.scratch2;
+          if (this.cam.project(p.x - p.vx * 0.035, p.y - p.vy * 0.035, p.z - p.vz * 0.035, t2)) {
+            ctx.strokeStyle = p.color;
+            ctx.lineCap = 'round';
+            ctx.lineWidth = Math.min(sz, 6);
+            ctx.beginPath();
+            ctx.moveTo(q.x, q.y);
+            ctx.lineTo(t2.x, t2.y);
+            ctx.stroke();
+            break;
+          }
+        }
         ctx.fillStyle = p.color;
         ctx.fillRect(q.x - sz * 0.5, q.y - sz * 0.5, sz, sz);
       }
@@ -1140,7 +1316,7 @@ export class Renderer {
         const q = this.proj(tr[i].x, tr[i].y, tr[i].z);
         if (!q) continue;
         const k = 1 - i / tr.length;
-        const r = Math.max(2, (0.18 + k * 0.45) * q.s);
+        const r = clamp((0.18 + k * 0.45) * q.s, 2, 34);
         ctx.fillStyle = i % 4 < 2 ? '#1fa85a' : '#2fd170';
         ctx.beginPath();
         ctx.arc(q.x, q.y, r, 0, Math.PI * 2);
@@ -1159,7 +1335,7 @@ export class Renderer {
       const n = this.proj(tr[2].x, tr[2].y, tr[2].z);
       if (h && n) {
         const ang = Math.atan2(h.y - n.y, h.x - n.x);
-        const r = 0.75 * h.s;
+        const r = Math.min(0.75 * h.s, 46);
         ctx.translate(h.x, h.y);
         ctx.rotate(ang);
         ctx.fillStyle = '#2fd170';
@@ -1218,7 +1394,7 @@ export class Renderer {
           ctx.globalAlpha = 0.5 - j * 0.11;
           ctx.fillStyle = '#d8b4ff';
           ctx.beginPath();
-          ctx.arc(q.x, q.y, BALL_R * 1.9 * q.s, 0, Math.PI * 2);
+          ctx.arc(q.x, q.y, BALL_R * this.ballScale * q.s, 0, Math.PI * 2);
           ctx.fill();
         }
         const q = this.proj(x, y, z);
@@ -1263,12 +1439,22 @@ export class Renderer {
   private drawOverlays(m: Match) {
     const ctx = this.ctx;
     const { w, h } = this;
-    // 비네트
-    const v = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.45, w / 2, h / 2, Math.max(w, h) * 0.75);
-    v.addColorStop(0, 'rgba(0,0,0,0)');
-    v.addColorStop(1, `rgba(0,0,0,${m.cfg.night ? 0.45 : 0.3})`);
-    ctx.fillStyle = v;
-    ctx.fillRect(0, 0, w, h);
+    // 비네트 (화면 크기별로 한 번만 그려 두고 재사용)
+    const vkey = `${w}x${h}${m.cfg.night ? 'n' : 'd'}`;
+    if (this.vignetteKey !== vkey) {
+      this.vignetteKey = vkey;
+      const vc = document.createElement('canvas');
+      vc.width = Math.ceil(w / 2);
+      vc.height = Math.ceil(h / 2);
+      const g = vc.getContext('2d')!;
+      const v = g.createRadialGradient(vc.width / 2, vc.height / 2, Math.min(vc.width, vc.height) * 0.45, vc.width / 2, vc.height / 2, Math.max(vc.width, vc.height) * 0.75);
+      v.addColorStop(0, 'rgba(0,0,0,0)');
+      v.addColorStop(1, `rgba(0,0,0,${m.cfg.night ? 0.45 : 0.3})`);
+      g.fillStyle = v;
+      g.fillRect(0, 0, vc.width, vc.height);
+      this.vignette = vc;
+    }
+    if (this.vignette) ctx.drawImage(this.vignette, 0, 0, w, h);
     if (m.fx.darken > 0.01) {
       ctx.fillStyle = `rgba(5,5,20,${m.fx.darken})`;
       ctx.fillRect(0, 0, w, h);
@@ -1288,66 +1474,46 @@ export class Renderer {
       ctx.fillRect(0, h - lb, w, lb);
     }
     if (m.phase === 'replay') {
-      ctx.font = `22px ${FONT_NUM}`;
-      ctx.textAlign = 'right';
+      // 화면 위 가운데 (스코어보드·일시정지 버튼과 겹치지 않게)
+      const small = this.touchMode || w < 700;
+      const ry = h * 0.09 + 8;
+      ctx.font = `${small ? 16 : 22}px ${FONT_NUM}`;
+      ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
       ctx.fillStyle = '#fff';
-      ctx.fillText('REPLAY', w - 24, h * 0.09 + 14);
+      ctx.fillText('REPLAY', w / 2 + 8, ry);
       if (Math.sin(this.time * 6) > 0) {
+        const rw = ctx.measureText('REPLAY').width;
         ctx.fillStyle = '#ff3b3b';
         ctx.beginPath();
-        ctx.arc(w - 140, h * 0.09 + 26, 7, 0, Math.PI * 2);
+        ctx.arc(w / 2 + 8 - rw / 2 - 12, ry + (small ? 8 : 11), small ? 5 : 7, 0, Math.PI * 2);
         ctx.fill();
       }
-      ctx.font = `13px ${FONT_BODY}`;
+      ctx.font = `${small ? 11 : 13}px ${FONT_BODY}`;
       ctx.fillStyle = 'rgba(255,255,255,0.7)';
-      ctx.fillText('아무 키나 눌러 건너뛰기', w - 24, h * 0.09 + 44);
+      ctx.fillText(this.touchMode ? '화면을 탭하면 건너뛰기' : '아무 키나 눌러 건너뛰기', w / 2, ry + (small ? 22 : 30));
     }
   }
 
   // ─────────────────────────────── HUD ───────────────────────────────
 
   private drawHud(m: Match) {
+    if (this.touchMode && m.humanTeam) {
+      this.drawTouchHud(m, m.humanTeam);
+      return;
+    }
     const ctx = this.ctx;
     const { w, h } = this;
-    const compact = w < 700 || h < 500 || this.touchMode;
+    const compact = w < 700 || h < 500;
     // 스코어보드
     const [a, b] = m.teams;
-    const sx = 18;
-    const sy = 16;
+    this.drawScoreboard(m, 18, 16, compact);
     ctx.save();
-    ctx.font = `${compact ? 15 : 19}px ${FONT_NUM}`;
-    ctx.textBaseline = 'middle';
-    const codeW = compact ? 44 : 54;
-    const scoreW = compact ? 56 : 68;
-    const timeW = compact ? 52 : 62;
-    const H = compact ? 30 : 36;
-    ctx.fillStyle = 'rgba(8,10,20,0.82)';
-    roundRect(ctx, sx, sy, codeW * 2 + scoreW + timeW + 14, H, 6);
-    ctx.fill();
-    const chip = (x: number, t: TeamState) => {
-      ctx.fillStyle = t.kit.shirt;
-      ctx.fillRect(x, sy + 5, 5, H - 10);
-    };
-    chip(sx + 6, a);
-    ctx.fillStyle = '#fff';
-    ctx.textAlign = 'center';
-    ctx.fillText(a.def.short, sx + 8 + codeW / 2, sy + H / 2 + 1);
-    ctx.fillStyle = '#ffe14d';
-    ctx.fillRect(sx + 10 + codeW, sy, scoreW, H);
-    ctx.fillStyle = '#111';
-    ctx.fillText(`${a.goals} - ${b.goals}`, sx + 10 + codeW + scoreW / 2, sy + H / 2 + 1);
-    ctx.fillStyle = '#fff';
-    ctx.fillText(b.def.short, sx + 12 + codeW + scoreW + codeW / 2 - 2, sy + H / 2 + 1);
-    chip(sx + 10 + codeW * 2 + scoreW - 3, b);
-    ctx.fillStyle = 'rgba(255,255,255,0.12)';
-    ctx.fillRect(sx + 12 + codeW * 2 + scoreW + 2, sy + 6, 1, H - 12);
-    ctx.fillStyle = '#9fe7ff';
-    ctx.fillText(`${String(m.minute).padStart(2, '0')}'`, sx + 14 + codeW * 2 + scoreW + timeW / 2, sy + H / 2 + 1);
     ctx.font = `11px ${FONT_BODY}`;
     ctx.fillStyle = 'rgba(255,255,255,0.65)';
     ctx.textAlign = 'left';
-    ctx.fillText(`${m.cfg.stageName} · ${m.half === 1 ? '전반' : '후반'}`, sx + 2, sy + H + 12);
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`${m.cfg.stageName} · ${m.half === 1 ? '전반' : '후반'}`, 20, 16 + (compact ? 30 : 36) + 12);
     ctx.restore();
 
     // 필살 게이지
@@ -1397,21 +1563,7 @@ export class Renderer {
       }
       ctx.restore();
     };
-    if (human && this.touchMode) {
-      // 터치 화면: 스틱·버튼과 겹치지 않게 위쪽에 배치
-      drawGauge(human, 22, 104, 'left', true);
-      if (h > w) {
-        drawGauge(m.opp(human), 22, 150, 'left', false);
-        if (Math.floor(this.time) % 8 < 4) {
-          ctx.save();
-          ctx.font = `13px ${FONT_BODY}`;
-          ctx.textAlign = 'center';
-          ctx.fillStyle = 'rgba(255,255,255,0.75)';
-          ctx.fillText('가로로 돌리면 더 넓게 보여요', w / 2, 196);
-          ctx.restore();
-        }
-      } else drawGauge(m.opp(human), w - 90 - gw * 0.65, 44, 'right', false);
-    } else if (human) {
+    if (human) {
       drawGauge(human, 22, h - 34, 'left', true);
       drawGauge(m.opp(human), w - 22 - gw * 0.65, h - 30, 'right', false);
     } else {
@@ -1419,8 +1571,9 @@ export class Renderer {
       drawGauge(b, w - 22 - gw, h - 34, 'right', true);
     }
 
-    // 레이더 (공이 레이더 뒤에 가려지면 반투명하게)
-    if (!compact) {
+    // 레이더 (공이 레이더 뒤에 가려지면 반투명하게, 시네마틱 장면에서는 숨김)
+    const cinematic = m.cine.w > 0.3 || m.phase === 'cutin';
+    if (!compact && !cinematic) {
       const rx = w / 2 - 100;
       const ry = h - 142;
       const bq = this.proj(m.ball.x, m.ball.y, m.ball.z);
@@ -1431,9 +1584,9 @@ export class Renderer {
       ctx.restore();
     }
 
-    // 중계 자막
+    // 중계 자막 (컷인 중에는 띠에 이름이 나오므로 생략)
     const c = m.commentary;
-    if (c.text && c.t < 3.2) {
+    if (c.text && c.t < 3.2 && m.phase !== 'cutin') {
       const a2 = clamp(3.2 - c.t, 0, 1) * clamp(c.t * 6, 0, 1);
       ctx.save();
       ctx.globalAlpha = a2;
@@ -1441,7 +1594,7 @@ export class Renderer {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       const tw = ctx.measureText(c.text).width;
-      const cy = this.touchMode ? (h > w ? 230 : 160) : compact ? h - 72 : h - 170;
+      const cy = compact ? h - 72 : h - 170;
       ctx.fillStyle = 'rgba(8,10,20,0.7)';
       roundRect(ctx, w / 2 - tw / 2 - 14, cy - 15, tw + 28, 30, 15);
       ctx.fill();
@@ -1451,7 +1604,164 @@ export class Renderer {
     }
 
     // 조작 안내
-    if (human && !this.touchMode && m.phase !== 'replay' && m.phase !== 'goal' && m.phase !== 'cutin') this.drawKeyHints(m, human);
+    if (human && !this.touchMode && !cinematic && m.phase !== 'replay' && m.phase !== 'goal') this.drawKeyHints(m, human);
+  }
+
+  private drawScoreboard(m: Match, sx: number, sy: number, compact: boolean, tiny = false) {
+    const ctx = this.ctx;
+    const [a, b] = m.teams;
+    ctx.save();
+    ctx.font = `${tiny ? 13 : compact ? 15 : 19}px ${FONT_NUM}`;
+    ctx.textBaseline = 'middle';
+    const codeW = tiny ? 36 : compact ? 44 : 54;
+    const scoreW = tiny ? 44 : compact ? 56 : 68;
+    const timeW = tiny ? 40 : compact ? 52 : 62;
+    const H = tiny ? 24 : compact ? 30 : 36;
+    ctx.fillStyle = 'rgba(8,10,20,0.78)';
+    roundRect(ctx, sx, sy, codeW * 2 + scoreW + timeW + 14, H, 5);
+    ctx.fill();
+    const chip = (x: number, t: TeamState) => {
+      ctx.fillStyle = t.kit.shirt;
+      ctx.fillRect(x, sy + 4, 4, H - 8);
+    };
+    chip(sx + 5, a);
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.fillText(a.def.short, sx + 8 + codeW / 2, sy + H / 2 + 1);
+    ctx.fillStyle = '#ffe14d';
+    ctx.fillRect(sx + 10 + codeW, sy, scoreW, H);
+    ctx.fillStyle = '#111';
+    ctx.fillText(`${a.goals} - ${b.goals}`, sx + 10 + codeW + scoreW / 2, sy + H / 2 + 1);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(b.def.short, sx + 12 + codeW + scoreW + codeW / 2 - 2, sy + H / 2 + 1);
+    chip(sx + 10 + codeW * 2 + scoreW - 3, b);
+    ctx.fillStyle = '#9fe7ff';
+    ctx.fillText(`${String(m.minute).padStart(2, '0')}'`, sx + 14 + codeW * 2 + scoreW + timeW / 2, sy + H / 2 + 1);
+    ctx.restore();
+    return { w: codeW * 2 + scoreW + timeW + 14, h: H };
+  }
+
+  /** 휴대폰 HUD: 스코어·게이지·중계를 위쪽 한 줄에 작게 모은다 */
+  private drawTouchHud(m: Match, user: TeamState) {
+    const ctx = this.ctx;
+    const { w, h } = this;
+    const sx = 10;
+    const sy = 8;
+    const sb = this.drawScoreboard(m, sx, sy, true, true);
+    // 필살 게이지: 스코어보드 아래 얇은 막대 두 줄 (우리 팀 굵게, 상대 가늘게)
+    const gy = sy + sb.h + 5;
+    const gw = sb.w;
+    const opp = m.opp(user);
+    const bar = (t: TeamState, y: number, hh: number) => {
+      const col = SPECIAL_COLORS[t.def.special.type];
+      ctx.fillStyle = 'rgba(8,10,20,0.6)';
+      ctx.fillRect(sx, y, gw, hh);
+      ctx.fillStyle = t.gauge >= 100 ? col[1] : col[0];
+      ctx.fillRect(sx, y, (gw * t.gauge) / 100, hh);
+    };
+    ctx.save();
+    bar(user, gy, 5);
+    bar(opp, gy + 7, 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.fillRect(sx + gw / 2, gy - 1, 1, 7);
+    ctx.font = `11px ${FONT_DISPLAY}`;
+    ctx.textBaseline = 'top';
+    ctx.textAlign = 'left';
+    const ready = user.gauge >= 100;
+    const col = SPECIAL_COLORS[user.def.special.type];
+    ctx.fillStyle = ready ? col[1] : 'rgba(255,255,255,0.75)';
+    if (ready) ctx.globalAlpha = 0.65 + Math.sin(this.time * 8) * 0.35;
+    ctx.fillText(ready ? `필살기 준비! ${user.def.special.name}` : `필살 ${Math.floor(user.gauge)}%`, sx, gy + 12);
+    ctx.globalAlpha = 1;
+    // 중계 자막: 위쪽, 작게
+    const c = m.commentary;
+    if (c.text && c.t < 3.2) {
+      const a2 = clamp(3.2 - c.t, 0, 1) * clamp(c.t * 6, 0, 1);
+      ctx.globalAlpha = a2 * 0.95;
+      ctx.font = `12px ${FONT_BODY}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const left = h > w ? sx : sx + sb.w + 12;
+      // 세로 화면에서는 오른쪽 위 레이더를 피한다
+      const right = h > w ? w - (Math.min(w, h) >= 700 ? 224 : 140) : w - 56;
+      const cx = (left + right) / 2;
+      const cy = h > w ? gy + 36 : sy + 12;
+      const maxW = right - left;
+      let text = c.text;
+      while (ctx.measureText(text).width > maxW - 20 && text.length > 4) text = text.slice(0, -2) + '…';
+      const tw = ctx.measureText(text).width;
+      ctx.fillStyle = 'rgba(8,10,20,0.6)';
+      roundRect(ctx, cx - tw / 2 - 10, cy - 11, tw + 20, 22, 11);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.fillText(text, cx, cy + 1);
+    }
+    ctx.restore();
+    // 시네마틱 장면에서는 레이더·안내를 걷어 화면을 비운다
+    const calm = m.phase === 'cutin' ? 0 : 1 - clamp(m.cine.w / 0.3, 0, 1);
+    if (h > w && m.realTime < 10 && calm > 0 && !m.banner && (m.phase === 'kickoff' || m.phase === 'setpiece' || m.phase === 'intro')) {
+      ctx.save();
+      ctx.font = `12px ${FONT_BODY}`;
+      ctx.textAlign = 'left';
+      ctx.fillStyle = 'rgba(255,255,255,0.7)';
+      ctx.fillText('가로로 돌리면 더 넓게 보여요', sx, gy + 64);
+      ctx.restore();
+    }
+    // 미니 레이더: 화면 밖 동료 위치 확인용 (가로: 아래 가운데, 세로: 오른쪽 위 일시정지 버튼 아래)
+    if (calm > 0 && m.phase !== 'replay' && m.phase !== 'cutin' && m.phase !== 'goal' && m.phase !== 'shootout') {
+      const tablet = Math.min(w, h) >= 700;
+      const rw = tablet ? 200 : 116;
+      const rh = Math.round(rw * 0.64);
+      const portrait = h > w;
+      const rx = portrait ? w - rw - 12 : w / 2 - rw / 2;
+      const ry = portrait ? 56 : h - rh - 12;
+      const bq = this.proj(m.ball.x, m.ball.y, m.ball.z);
+      const near = bq && bq.x > rx - 30 && bq.x < rx + rw + 30 && bq.y > ry - 30 && bq.y < ry + rh + 30;
+      ctx.save();
+      ctx.globalAlpha = (near ? 0.25 : 0.8) * calm;
+      this.drawRadar(m, rx, ry, rw, rh);
+      ctx.restore();
+    }
+    // 세트피스·첫 킥오프 안내 (버튼 묶음 바로 위, 작게)
+    const tip = calm > 0.5 ? this.touchTip(m, user) : null;
+    if (tip) {
+      ctx.save();
+      ctx.font = `12px ${FONT_BODY}`;
+      ctx.textBaseline = 'bottom';
+      const tw = ctx.measureText(tip).width;
+      // 가로 화면: 골문·키커를 가리지 않도록 맨 위 줄(중계 자막 아래), 세로 화면: 버튼 묶음 위
+      const landscape = w > h;
+      const ty = landscape ? 62 : h - (h <= 430 ? 190 : 222);
+      const x0 = landscape ? clamp(w / 2 - (tw + 16) / 2, sx + sb.w + 8, w - 56 - tw - 16) : w - 12 - tw - 12;
+      ctx.fillStyle = 'rgba(8,10,20,0.6)';
+      roundRect(ctx, x0, ty - 20, tw + 16, 22, 11);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
+      ctx.textAlign = 'left';
+      ctx.fillText(tip, x0 + 8, ty - 3);
+      ctx.restore();
+    }
+  }
+
+  /** 터치 조작 안내 한 줄 */
+  private touchTip(m: Match, user: TeamState): string | null {
+    const sp = m.setPiece;
+    const p = user.controlled;
+    if ((m.phase === 'setpiece' || m.phase === 'kickoff') && sp && sp.side === user.side && sp.taker === p) {
+      const tips: Record<string, string> = {
+        kickoff: '킥오프 버튼으로 시작 · 스틱으로 방향',
+        throw: '스틱으로 방향 · 스로인=짧게 · 멀리=길게',
+        corner: '크로스: 길게 누를수록 멀리 · 짧게=짧은 패스',
+        goalkick: '짧게 · 롱킥(길게 누를수록 멀리) · 스루',
+        freekick: '슛 버튼을 옆으로 밀며 떼면 감아차기 · 위로=칩슛',
+        penalty: '스틱 위아래로 코너 조준 · 슛을 길게 눌러 파워',
+      };
+      // 세트피스 안내는 처음 몇 초만 (조준할 골문을 오래 가리지 않게)
+      if (sp.t > 4) return null;
+      return tips[sp.kind] ?? null;
+    }
+    if (m.half === 1 && m.clock < 8 && !m.ball.guide && (m.phase === 'kickoff' || m.phase === 'play')) return '슛: 길게=강슛 · 위로 밀며 떼기=칩슛 · 옆으로=감아차기';
+    return null;
   }
 
   private drawKeyHints(m: Match, team: TeamState) {
@@ -1521,13 +1831,14 @@ export class Renderer {
       ctx.strokeStyle = 'rgba(255,255,255,0.18)';
       ctx.strokeRect(x + (clamp(tl.x, 0, PITCH_L) / PITCH_L) * w, y, ((clamp(br.x, 0, PITCH_L) - clamp(tl.x, 0, PITCH_L)) / PITCH_L) * w, h);
     }
+    const dk = clamp(w / 200, 0.7, 1);
     for (const t of m.teams) {
       for (const p of t.active) {
         const px = x + (clamp(p.x, 0, PITCH_L) / PITCH_L) * w;
         const py = y + (clamp(p.y, 0, PITCH_W) / PITCH_W) * h;
         ctx.fillStyle = p.isGK ? t.def.gkShirt : t.kit.shirt;
         ctx.beginPath();
-        ctx.arc(px, py, p.human ? 4.5 : 3.2, 0, Math.PI * 2);
+        ctx.arc(px, py, (p.human ? 4.5 : 3.2) * dk, 0, Math.PI * 2);
         ctx.fill();
         ctx.strokeStyle = p.human ? '#ffe14d' : 'rgba(0,0,0,0.6)';
         ctx.lineWidth = p.human ? 2 : 1;
@@ -1552,7 +1863,10 @@ export class Renderer {
     const dur = c.dur;
     const inK = clamp(t / 0.22, 0, 1);
     const outK = clamp((dur - t) / 0.25, 0, 1);
-    const k = Math.min(inK, outK);
+    // 두 박자: 앞 58%는 이름 띠, 그다음 띠가 빠지고 낮은 각도의 기 모으는 장면이 보인다
+    const beatOut = clamp(1 - (t - dur * 0.58) / 0.18, 0, 1);
+    const kBar = Math.min(inK, outK);
+    const k = Math.min(kBar, beatOut);
     const col = SPECIAL_COLORS[c.type];
     const team = c.p.team;
     ctx.save();
@@ -1571,7 +1885,7 @@ export class Renderer {
     ctx.globalAlpha = 1;
     // 대각선 띠
     const bandH = h * 0.36;
-    const slide = (1 - inK) * w;
+    const slide = (1 - inK) * w + (1 - beatOut) * w * 0.7;
     ctx.translate(slide, 0);
     ctx.beginPath();
     ctx.moveTo(0, h / 2 - bandH / 2 + 40);
@@ -1595,8 +1909,8 @@ export class Renderer {
       ctx.fillRect(xx, 0, 30, h);
     }
     ctx.globalAlpha = k;
-    // 선수 실루엣 (크게)
-    const scale = bandH / 2.1;
+    // 선수 실루엣 (크게, 머리가 띠 밖으로 잘리지 않게)
+    const scale = bandH / 2.7;
     const fakeQ: Proj = { x: w * 0.22, y: h / 2 + bandH / 2 - 8, d: 1, s: scale };
     const sprite = this.glowSprite(col[0]);
     ctx.globalCompositeOperation = 'lighter';
@@ -1615,14 +1929,26 @@ export class Renderer {
     ctx.globalAlpha = tk * k;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.font = `${Math.round(h * 0.04)}px ${FONT_DISPLAY}`;
-    ctx.fillStyle = 'rgba(255,255,255,0.85)';
-    ctx.fillText(`${team.def.name} · No.${c.p.def.num} ${c.p.def.name}`, tx, h / 2 - bandH * 0.22);
-    const big = Math.round(Math.min(h * 0.11, w * 0.07));
-    ctx.font = `${big}px ${FONT_DISPLAY}`;
-    ctx.lineWidth = 8;
-    ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+    // 글자 크기는 짧은 변 기준, 남은 폭에 맞춰 줄인다 (세로 화면에서 잘리지 않게)
+    const avail = w * 0.58 - 16;
+    const minSide = Math.min(w, h);
+    const fit = (text: string, size: number) => {
+      ctx.font = `${size}px ${FONT_DISPLAY}`;
+      const tw = ctx.measureText(text).width;
+      return Math.max(10, Math.floor(tw > avail ? (size * avail) / tw : size));
+    };
+    const line1 = `${team.def.name} · No.${c.p.def.num} ${c.p.def.name}`;
     const title = `${team.def.special.name}!!`;
+    const sub = `필살 · ${SPECIAL_LABEL[c.type]} 속성`;
+    const big = fit(title, Math.round(Math.min(minSide * 0.12, w * 0.08)));
+    const s1 = Math.min(fit(line1, Math.round(minSide * 0.045)), Math.round(big / 1.6));
+    const s3 = Math.min(fit(sub, Math.round(minSide * 0.036)), Math.round(big / 1.7));
+    ctx.font = `${s1}px ${FONT_DISPLAY}`;
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.fillText(line1, tx, h / 2 - bandH * 0.22);
+    ctx.font = `${big}px ${FONT_DISPLAY}`;
+    ctx.lineWidth = Math.max(4, big * 0.14);
+    ctx.strokeStyle = 'rgba(0,0,0,0.85)';
     ctx.strokeText(title, tx, h / 2 + bandH * 0.02);
     const tg = ctx.createLinearGradient(0, h / 2 - big / 2, 0, h / 2 + big / 2);
     tg.addColorStop(0, '#ffffff');
@@ -1630,9 +1956,92 @@ export class Renderer {
     tg.addColorStop(1, col[0]);
     ctx.fillStyle = tg;
     ctx.fillText(title, tx, h / 2 + bandH * 0.02);
-    ctx.font = `${Math.round(h * 0.03)}px ${FONT_DISPLAY}`;
+    ctx.font = `${s3}px ${FONT_DISPLAY}`;
     ctx.fillStyle = col[1];
-    ctx.fillText(`필살 · ${SPECIAL_LABEL[c.type]} 속성`, tx, h / 2 + bandH * 0.25);
+    ctx.fillText(sub, tx, h / 2 + bandH * 0.25);
+    // 사람이 쏜 필살기: 타이밍 막대 (끝의 초록 구간에서 슛 버튼 → 키퍼가 막기 어려워진다)
+    if (team.human) {
+      const bw = Math.min(w * 0.56, 340);
+      const bx = w / 2 - bw / 2 - slide;
+      const by = Math.min(h - 46, h / 2 + bandH / 2 + 30);
+      const kk = cutinDuelK(t, dur);
+      ctx.globalAlpha = kBar;
+      ctx.fillStyle = 'rgba(0,0,0,0.65)';
+      roundRect(ctx, bx - 6, by - 6, bw + 12, 22, 11);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,225,77,0.45)';
+      ctx.fillRect(bx + bw * 0.64, by, bw * 0.18, 10);
+      ctx.fillStyle = 'rgba(61,255,143,0.85)';
+      ctx.fillRect(bx + bw * 0.82, by, bw * 0.18, 10);
+      if (c.duel === 'none') {
+        ctx.fillStyle = kk > 1 ? '#ff6b6b' : '#ffffff';
+        ctx.fillRect(bx + bw * clamp(kk, 0, 1) - 2 + (kk > 1 ? 6 : 0), by - 4, 4, 18);
+      }
+      const fs2 = Math.round(clamp(minSide * 0.04, 13, 20));
+      ctx.font = `${fs2}px ${FONT_DISPLAY}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      const label =
+        c.duel === 'none'
+          ? kk > 1
+            ? '늦었다…'
+            : this.touchMode
+              ? '초록 구간에서 슛 버튼!'
+              : '초록 구간에서 K!'
+          : c.duel === 'perfect'
+            ? 'PERFECT! 막기 어려운 필살 슛'
+            : c.duel === 'good'
+              ? 'GOOD'
+              : c.duel === 'late'
+                ? '늦었다…'
+                : '너무 빨랐다…';
+      ctx.fillStyle = c.duel === 'perfect' ? '#3dff8f' : c.duel === 'early' || c.duel === 'late' || kk > 1 ? '#ff9a9a' : '#ffffff';
+      ctx.fillText(label, bx + bw / 2, by - 10);
+    }
+    ctx.restore();
+  }
+
+  /** CPU 필살기가 날아올 때: 우리 키퍼 주위의 줄어드는 고리, 초록일 때 슛 버튼 */
+  private drawSaveDuel(m: Match, layer: 'ring' | 'text') {
+    const d = m.saveDuel;
+    const b = m.ball;
+    const user = m.humanTeam;
+    if (!d || !user || d.res !== 'none' || !b.guide || !b.special || !b.shot || b.shot.judged || b.shot.side === user.side) return;
+    const gk = user.gk;
+    const ctx = this.ctx;
+    const r0 = d.r0 > 0 ? d.r0 : 0.5;
+    const hot = d.rem <= Math.max(0.45 * r0, 0.2);
+    if (layer === 'text') {
+      const fs = this.touchMode || this.w < 700 ? 15 : 20;
+      ctx.save();
+      ctx.font = `${fs}px ${FONT_DISPLAY}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+      const txt = this.touchMode ? '막아라! 고리가 초록일 때 막기 버튼' : '막아라! 고리가 초록일 때 K';
+      const ty = this.touchMode ? this.h * 0.24 : this.h * 0.2;
+      ctx.strokeText(txt, this.w / 2, ty);
+      ctx.fillStyle = hot ? '#3dff8f' : '#ffffff';
+      ctx.fillText(txt, this.w / 2, ty);
+      ctx.restore();
+      return;
+    }
+    const q = this.proj(gk.x, gk.y, 0.05);
+    if (!q) return;
+    const r = 0.8 + clamp(d.rem / r0, 0, 1) * 2.6;
+    ctx.save();
+    ctx.strokeStyle = hot ? '#3dff8f' : 'rgba(255,255,255,0.9)';
+    ctx.lineWidth = Math.max(2.5, 0.1 * q.s);
+    ctx.beginPath();
+    ctx.ellipse(q.x, q.y, r * q.s, r * 0.4 * q.s, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(61,255,143,0.5)';
+    ctx.lineWidth = Math.max(1.5, 0.05 * q.s);
+    ctx.beginPath();
+    const rg = 0.8 + clamp(Math.max(0.45 * r0, 0.2) / r0, 0, 1) * 2.6;
+    ctx.ellipse(q.x, q.y, rg * q.s, rg * 0.4 * q.s, 0, 0, Math.PI * 2);
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -1647,17 +2056,18 @@ export class Renderer {
     const inK = clamp(t / 0.18, 0, 1);
     const outK = clamp((bn.dur - t) / 0.3, 0, 1);
     const k = Math.min(inK, outK);
-    const big = bn.text.includes('GOAL') || bn.text.includes('골') || bn.text.includes('승리');
-    const size = big ? Math.min(w * 0.13, h * 0.2) : Math.min(w * 0.06, h * 0.085);
-    const sc = big ? 1.6 - 0.6 * inK + Math.sin(t * 6) * 0.02 : 1;
+    // 큰 글씨는 진짜 골·승리만 ('골킥'은 작은 안내)
+    const big = /^(GOAL|필살 골|골!)/.test(bn.text) || bn.text.endsWith('승리!');
+    if (!big) {
+      this.drawPill(bn.text, bn.sub, bn.color, k, m.phase === 'shootout');
+      return;
+    }
+    const size = Math.min(w * 0.13, h * (this.touchMode ? 0.15 : 0.2));
+    const sc = 1.6 - 0.6 * inK + Math.sin(t * 6) * 0.02;
     ctx.save();
     ctx.globalAlpha = k;
-    ctx.translate(w / 2, h * (big ? 0.42 : 0.3));
+    ctx.translate(w / 2, h * (this.touchMode ? 0.34 : 0.42));
     ctx.scale(sc, sc);
-    if (!big) {
-      ctx.fillStyle = 'rgba(8,10,20,0.7)';
-      ctx.fillRect(-w, -size * 0.75, w * 2, size * (bn.sub ? 2.1 : 1.5));
-    }
     ctx.font = `${Math.round(size)}px ${FONT_DISPLAY}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -1678,6 +2088,39 @@ export class Renderer {
       ctx.strokeText(bn.sub, 0, size * (big ? 0.72 : 0.78));
       ctx.fillStyle = '#ffffff';
       ctx.fillText(bn.sub, 0, size * (big ? 0.72 : 0.78));
+    }
+    ctx.restore();
+  }
+
+  /** 킥오프·스로인 같은 짧은 안내: 화면 위쪽 가운데 작은 알약 */
+  private drawPill(text: string, sub: string, color: string, alpha: number, shootout = false) {
+    const ctx = this.ctx;
+    const { w, h } = this;
+    const fs = this.touchMode || w < 700 ? 15 : 20;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.font = `${fs}px ${FONT_DISPLAY}`;
+    const tw = ctx.measureText(text).width;
+    ctx.font = `${Math.round(fs * 0.72)}px ${FONT_BODY}`;
+    const sw = sub ? ctx.measureText(sub).width + 14 : 0;
+    const pw = tw + sw + 32;
+    const ph = fs + 16;
+    // 승부차기: 집계표·키커 이름 아래 / 세로 터치 화면: 중계 자막 아래, 오른쪽 레이더와 겹치지 않게
+    const portraitTouch = this.touchMode && h > w;
+    const y = shootout ? h * 0.7 : portraitTouch ? 92 : this.touchMode ? 52 : 70;
+    const cx = portraitTouch && !shootout ? Math.min(w / 2, w - 140 - pw / 2) : w / 2;
+    ctx.fillStyle = 'rgba(8,10,20,0.78)';
+    roundRect(ctx, cx - pw / 2, y, pw, ph, ph / 2);
+    ctx.fill();
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    ctx.font = `${fs}px ${FONT_DISPLAY}`;
+    ctx.fillStyle = color;
+    ctx.fillText(text, cx - pw / 2 + 16, y + ph / 2 + 1);
+    if (sub) {
+      ctx.font = `${Math.round(fs * 0.72)}px ${FONT_BODY}`;
+      ctx.fillStyle = 'rgba(255,255,255,0.78)';
+      ctx.fillText(sub, cx - pw / 2 + 16 + tw + 14, y + ph / 2 + 1);
     }
     ctx.restore();
   }
@@ -1709,9 +2152,10 @@ export class Renderer {
       ctx.fillText(t.def.short, bx + 22, y);
       const kicks = so.kicks[side];
       const n = Math.max(5, kicks.length + (so.turn === side ? 1 : 0));
-      for (let i = 0; i < n; i++) {
-        const cx = bx + 92 + i * 26;
-        if (cx > bx + 300) break;
+      // 서든데스가 길어지면 최근 8개만 보여준다
+      const start = Math.max(0, n - 8);
+      for (let i = start; i < n; i++) {
+        const cx = bx + 92 + (i - start) * 26;
         ctx.beginPath();
         ctx.arc(cx, y, 9, 0, Math.PI * 2);
         if (i < kicks.length) {
@@ -1757,10 +2201,10 @@ export class Renderer {
         ctx.lineTo(q.x, q.y + 24);
         ctx.stroke();
       }
-      // 파워
-      const pw = 260;
+      // 파워 (휴대폰: 골문을 가리지 않게 화면 맨 아래 가운데, 짧게)
+      const pw = this.touchMode ? Math.min(220, w * 0.34) : 260;
       const px = w / 2 - pw / 2;
-      const py = h - 70;
+      const py = this.touchMode ? h - 30 : h - 70;
       ctx.fillStyle = 'rgba(0,0,0,0.6)';
       ctx.fillRect(px - 3, py - 3, pw + 6, 18);
       const g = ctx.createLinearGradient(px, 0, px + pw, 0);
@@ -1771,15 +2215,31 @@ export class Renderer {
       ctx.fillRect(px, py, pw * so.power, 12);
       ctx.fillStyle = '#fff';
       ctx.fillRect(px + pw * 0.82, py - 4, 2, 20);
-      ctx.font = `14px ${FONT_BODY}`;
-      ctx.textAlign = 'center';
-      ctx.fillText('방향키: 조준  ·  K 길게 눌렀다 떼기: 슛 (빨간 구간은 뜰 수 있음)', w / 2, py + 34);
+      if (!this.touchMode) {
+        ctx.font = `14px ${FONT_BODY}`;
+        ctx.textAlign = 'center';
+        ctx.fillText('방향키: 조준  ·  K 길게 눌렀다 떼기: 슛 (빨간 구간은 뜰 수 있음)', w / 2, py + 34);
+      } else if (so.kicks[so.turn].length === 0) {
+        // 첫 킥에서만 짧게 안내
+        ctx.font = `12px ${FONT_BODY}`;
+        ctx.textAlign = 'center';
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+        const tip = '왼쪽 화면을 끌어 조준 · 슛 버튼 길게 눌렀다 떼기';
+        ctx.strokeText(tip, w / 2, py - 10);
+        ctx.fillText(tip, w / 2, py - 10);
+      }
     }
     if (so.humanKeeping && (so.stage === 'aim' || so.stage === 'runup' || so.stage === 'ready')) {
-      ctx.font = `15px ${FONT_BODY}`;
+      ctx.font = `${this.touchMode ? 13 : 15}px ${FONT_BODY}`;
       ctx.textAlign = 'center';
       ctx.fillStyle = '#fff';
-      ctx.fillText(so.keeperDir.locked ? '다이빙 방향 확정!' : '방향키로 다이빙 방향 선택 · K로 확정 (중앙은 그대로)', w / 2, h - 48);
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+      const kt = so.keeperDir.locked ? '다이빙 방향 확정!' : this.touchMode ? '왼쪽 화면을 끌어 다이빙 방향 · 확정 버튼' : '방향키로 다이빙 방향 선택 · K로 확정 (중앙은 그대로)';
+      const ky = this.touchMode ? h - 22 : h - 48;
+      ctx.strokeText(kt, w / 2, ky);
+      ctx.fillText(kt, w / 2, ky);
       // 방향 화살표
       const gk = so.keeper;
       const q = this.proj(gk.x, CY + so.keeperDir.y * 2.6, 0.8 + Math.max(0, so.keeperDir.z) * 1.2);
@@ -1817,10 +2277,16 @@ export function hexA(hex: string, a: number) {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${clamp(a, 0, 1)})`;
 }
 
+const shadeCache = new Map<string, string>();
 export function shade(hex: string, amt: number) {
+  const key = hex + amt;
+  const hit = shadeCache.get(key);
+  if (hit) return hit;
   const n = parseInt(hex.slice(1, 7), 16);
   const r = clamp(((n >> 16) & 255) + amt, 0, 255);
   const g = clamp(((n >> 8) & 255) + amt, 0, 255);
   const b = clamp((n & 255) + amt, 0, 255);
-  return `rgb(${r},${g},${b})`;
+  const out = `rgb(${r},${g},${b})`;
+  if (shadeCache.size < 512) shadeCache.set(key, out);
+  return out;
 }

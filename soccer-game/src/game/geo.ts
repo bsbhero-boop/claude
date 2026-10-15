@@ -65,12 +65,14 @@ export function nearestOpp(opps: Player[], x: number, y: number) {
 /** 패스 경로의 차단 위험 (0..1) */
 export function laneRisk(opps: Player[], fx: number, fy: number, tx: number, ty: number, speed: number, lofted = false) {
   const L = len(tx - fx, ty - fy);
+  // 로빙은 실제 체공 시간만큼 수비가 따라붙을 시간이 있다
+  const flight = 0.7 + L / 23;
   let risk = 0;
   for (const o of opps) {
     if (o.sentOff) continue;
     const { d, t } = segDist(o, { x: fx, y: fy }, { x: tx, y: ty });
     const along = t * L;
-    const tb = along / Math.max(6, speed);
+    const tb = lofted ? t * flight : along / Math.max(6, speed);
     // 로빙볼은 중간 구간을 넘어간다
     if (lofted && t > 0.15 && t < 0.85) continue;
     const reach = 0.9 + 6.5 * tb * 0.55 + (o.isGK ? 0.8 : 0);

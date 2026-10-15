@@ -8,8 +8,19 @@ class AudioEngine {
   private noiseBuf: AudioBuffer | null = null;
   muted = false;
   volume = 0.8;
+  /** 타이틀 배경 데모 경기 중에는 효과음을 끄고 관중 소리만 작게 */
+  sfxOff = false;
   private crowdLevel = 0.25;
   private crowdTarget = 0.25;
+
+  /** 앱이 백그라운드로 갈 때 */
+  suspend() {
+    if (this.ctx && this.ctx.state === 'running') this.ctx.suspend().catch(() => {});
+  }
+
+  resume() {
+    if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
+  }
 
   /** 사용자 입력 이후 호출해야 소리가 난다 */
   init() {
@@ -85,7 +96,7 @@ class AudioEngine {
 
   /** 관중 소리 기본 세기 (0..1) */
   crowd(level: number) {
-    this.crowdTarget = level;
+    this.crowdTarget = this.sfxOff ? Math.min(level, 0.12) : level;
   }
 
   update(dt: number) {
@@ -98,11 +109,13 @@ class AudioEngine {
   }
 
   private noise(dur: number, freq: number, q: number, gain: number, type: BiquadFilterType = 'bandpass', attack = 0.005, when = 0) {
-    if (!this.ctx || !this.noiseBuf) return;
+    if (!this.ctx || !this.noiseBuf || this.sfxOff) return;
     const ctx = this.ctx;
     const t = ctx.currentTime + when;
     const src = ctx.createBufferSource();
     src.buffer = this.noiseBuf;
+    // 버퍼(3초)보다 긴 소리도 끊기지 않게 반복 재생
+    src.loop = true;
     src.playbackRate.value = 1;
     const f = ctx.createBiquadFilter();
     f.type = type;
@@ -121,7 +134,7 @@ class AudioEngine {
   }
 
   private tone(freq: number, dur: number, type: OscillatorType, gain: number, endFreq?: number, when = 0) {
-    if (!this.ctx) return;
+    if (!this.ctx || this.sfxOff) return;
     const ctx = this.ctx;
     const t = ctx.currentTime + when;
     const o = ctx.createOscillator();
@@ -148,7 +161,7 @@ class AudioEngine {
   }
 
   whistle(count = 1, long = false) {
-    if (!this.ctx) return;
+    if (!this.ctx || this.sfxOff) return;
     for (let i = 0; i < count; i++) {
       const when = i * (long ? 0.55 : 0.32);
       const dur = long && i === count - 1 ? 0.9 : 0.22;
@@ -206,7 +219,7 @@ class AudioEngine {
   }
 
   charge() {
-    if (!this.ctx) return;
+    if (!this.ctx || this.sfxOff) return;
     const ctx = this.ctx;
     const t = ctx.currentTime;
     const o = ctx.createOscillator();

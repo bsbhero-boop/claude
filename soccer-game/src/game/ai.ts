@@ -1,7 +1,7 @@
 import { beginKick, choosePassTarget, skillMove, startSlide, startTackle } from './actions';
 import { CY, GOAL_HALF_W, PITCH_L, PITCH_W, RUN_SPEED, SPRINT_SPEED } from './constants';
 import type { Player, TeamState } from './entities';
-import { distToGoal, inOppBox, inOwnBox, laneRisk, nearestOpp, threat, xg } from './geo';
+import { distToGoal, goalAngle, inOppBox, inOwnBox, laneRisk, nearestOpp, threat, xg } from './geo';
 import { chance, clamp, gauss, len, norm, rand } from './math';
 import type { Match } from './match';
 
@@ -9,6 +9,8 @@ export interface Brain {
   phase: 'att' | 'def' | 'loose';
   chaser: Player | null;
   chaserT: number;
+  /** 사람이 조종하는 선수가 추격자일 때 함께 공을 쫓는 AI 동료 */
+  support: Player | null;
   presser1: Player | null;
   presser2: Player | null;
   /** 상대 최종 수비 라인 (이 팀 기준 u) */
@@ -17,7 +19,7 @@ export interface Brain {
 }
 
 export function newBrain(): Brain {
-  return { phase: 'loose', chaser: null, chaserT: 99, presser1: null, presser2: null, oppLineU: 0.8, supporters: [] };
+  return { phase: 'loose', chaser: null, chaserT: 99, support: null, presser1: null, presser2: null, oppLineU: 0.8, supporters: [] };
 }
 
 /** 선수가 공을 잡을 수 있는 가장 빠른 시간과 지점 */
@@ -49,27 +51,45 @@ export function thinkTeam(m: Match, team: TeamState, dt: number) {
   else if (b.shot && b.shot.by.team === team) brain.phase = 'att';
   else brain.phase = 'loose';
 
-  // 상대 수비 라인
-  let line = 0;
-  for (const o of opp.active) {
-    if (o.isGK) continue;
-    const u = team.u(o.x);
-    if (u > line) line = u;
-  }
-  brain.oppLineU = Math.max(0.55, line);
+  // 상대 수비 라인: 골라인에서 두 번째로 가까운 상대 (보통 키퍼 다음 최종 수비수)
+  const us = opp.active.map((o) => team.u(o.x)).sort((a, c) => c - a);
+  brain.oppLineU = us[1] ?? 0.8;
 
   // 루즈볼 추격자
   brain.chaser = null;
   brain.chaserT = 99;
+  brain.support = null;
   if (!owner) {
+    let aiBest: Player | null = null;
+    let aiT = 99;
+    // 상대 패스가 날아가는 중이면, 받는 선수보다 먼저 닿을 수 있는 선수만 공을 쫓는다
+    // (못 끊는 패스를 쫓아 수비 대형이 무너지거나 사람 조종이 엉뚱한 선수로 넘어가지 않게)
+    const pass = m.ball.pass;
+    const limitT = pass && pass.to && pass.from.team !== team ? interceptFor(m, pass.to).t + 0.7 : 99;
     for (const p of team.active) {
       if (p.state === 'down' || p.state === 'frozen') continue;
       if (p.isGK && !inOwnBox(team, m.pred[Math.min(10, m.pred.length - 1)].x, m.pred[Math.min(10, m.pred.length - 1)].y)) continue;
       const ic = interceptFor(m, p);
+      if (ic.t > limitT) continue;
       if (ic.t < brain.chaserT) {
         brain.chaserT = ic.t;
         brain.chaser = p;
       }
+      if (!p.human && !p.isGK && ic.t < aiT) {
+        aiT = ic.t;
+        aiBest = p;
+      }
+    }
+    // 사람 선수가 가장 가깝더라도, 공 쪽으로 움직이지 않으면 AI 동료가 같이 쫓는다
+    const ch = brain.chaser;
+    if (ch && ch.human && aiBest && aiT < brain.chaserT + 1.2) {
+      const ic = interceptFor(m, ch);
+      const ax = m.input.axis();
+      const dx = ic.x - ch.x;
+      const dy = ic.y - ch.y;
+      const dl = Math.hypot(dx, dy) || 1;
+      const steeringToBall = ax.mag > 0.2 && (ax.x * dx + ax.y * dy) / dl > 0.5 * ax.mag;
+      if (!steeringToBall || aiT < brain.chaserT) brain.support = aiBest;
     }
   }
 
@@ -82,8 +102,9 @@ export function thinkTeam(m: Match, team: TeamState, dt: number) {
       .sort((a, c) => a.d - c.d);
     const ctl = team.human ? team.controlled : null;
     const list = cands.filter((c) => c.p !== ctl);
-    if (ctl && len(ctl.x - owner.x, ctl.y - owner.y) < 7) {
-      // 사람이 직접 압박 중이면 AI는 커버만
+    const ctlGoalSide = ctl && len(ctl.x - owner.x, ctl.y - owner.y) < 5 && team.u(ctl.x) < team.u(owner.x);
+    if (ctlGoalSide && !m.teammatePress) {
+      // 사람이 골대 쪽에서 직접 막고 있으면 AI는 커버만 (동료 압박 버튼을 누르면 함께 압박)
       brain.presser1 = null;
       brain.presser2 = list[0]?.p ?? null;
     } else {
@@ -95,8 +116,9 @@ export function thinkTeam(m: Match, team: TeamState, dt: number) {
   // 지원 선수 (공격 시 공 근처로 내려와 패스 길을 열어준다)
   brain.supporters = [];
   if (brain.phase === 'att' && owner && owner.team === team) {
+    const finalThird = team.u(owner.x) > 0.66;
     brain.supporters = team.active
-      .filter((p) => p !== owner && !p.isGK)
+      .filter((p) => p !== owner && !p.isGK && !(finalThird && p.role === 'FW'))
       .map((p) => ({ p, d: len(p.x - owner.x, p.y - owner.y) }))
       .sort((a, c) => a.d - c.d)
       .slice(0, 2)
@@ -124,13 +146,16 @@ export function formationSpot(m: Match, team: TeamState, p: Player, phase: Brain
   let v: number;
   if (phase === 'att' || (phase === 'loose' && bu > 0.5)) {
     u = slot.u + 0.07 + (bu - 0.35) * 0.62 + ment;
-    if (slot.role === 'DF') u = Math.min(u, bu - 0.08 + (slot.wide ? 0.12 + ment : 0));
+    // 수비수는 공보다 뒤에 있되, 키퍼가 공을 잡았을 때 골라인까지 내려앉지는 않는다
+    if (slot.role === 'DF') u = Math.min(u, Math.max(slot.u + (slot.wide ? 0.08 : 0), bu - 0.08 + (slot.wide ? 0.12 + ment : 0)));
     v = 0.5 + (slot.v - 0.5) * 1.18 + (bv - 0.5) * 0.18;
-    if (slot.wide) v = slot.v < 0.5 ? Math.min(v, 0.08) : Math.max(v, 0.92);
+    // 측면 선수는 공이 같은 쪽에 있을 때만 터치라인에 붙고, 반대쪽이면 안으로 좁혀 들어온다
+    if (slot.wide && (bv - 0.5) * (slot.v - 0.5) >= 0) v = slot.v < 0.5 ? Math.min(v, 0.08) : Math.max(v, 0.92);
+    else if (slot.wide) v = 0.5 + (slot.v - 0.5) * 0.55;
     if (slot.role === 'FW' || (slot.role === 'MF' && slot.u > 0.45)) {
-      // 상대 라인에 맞춰 대기 (오프사이드 감각)
+      // 상대 라인에 맞춰 대기 (오프사이드 감각). 역습 때는 공보다 앞서 달린다
       const brain = m.brains[team.side];
-      const cap = p.runActive ? 0.93 : brain.oppLineU - 0.01;
+      const cap = p.runActive ? 0.93 : Math.max(brain.oppLineU, bu + 0.08) - 0.01;
       u = Math.min(Math.max(u, bu - 0.05), cap);
     }
   } else {
@@ -202,7 +227,7 @@ function playerAI(m: Match, p: Player, brain: Brain, dt: number) {
     return;
   }
   // 루즈볼 추격
-  if (!b.owner && brain.chaser === p) {
+  if (!b.owner && (brain.chaser === p || brain.support === p)) {
     const ic = interceptFor(m, p);
     moveTo(p, ic.x, ic.y, 1, b.x, b.y);
     return;
@@ -216,7 +241,7 @@ function playerAI(m: Match, p: Player, brain: Brain, dt: number) {
     }
     if (p === brain.presser2) {
       const pressing = team.tactics.pressing + (team.shout === 'press' ? 1 : 0);
-      if (pressing >= 2 && len(p.x - o.x, p.y - o.y) < 12 && !team.human) {
+      if ((team.human ? m.teammatePress : pressing >= 2) && len(p.x - o.x, p.y - o.y) < 12) {
         pressAI(m, p, dt, 0.5);
         return;
       }
@@ -265,6 +290,11 @@ function playerAI(m: Match, p: Player, brain: Brain, dt: number) {
       moveTo(p, p.aiTarget.x, p.aiTarget.y, 0.65, b.x, b.y);
       return;
     }
+    const box = boxRunSpot(p, b.owner);
+    if (box) {
+      moveTo(p, box.x, box.y, 0.85, b.x, b.y);
+      return;
+    }
     const spot = formationSpot(m, team, p, 'att');
     moveTo(p, spot.x, spot.y, p.runActive ? 0.95 : 0.55, b.x, b.y);
     return;
@@ -272,6 +302,27 @@ function playerAI(m: Match, p: Player, brain: Brain, dt: number) {
 
   const spot = formationSpot(m, team, p, brain.phase);
   moveTo(p, spot.x, spot.y, 0.5, b.x, b.y);
+}
+
+/** 공이 마무리 지역에 있으면 공격수는 니어·파 포스트로, 반대편 측면 선수는 파 포스트로 침투 */
+function boxRunSpot(p: Player, owner: Player) {
+  const team = p.team;
+  if (team.u(owner.x) < 0.66) return null;
+  const bv = team.v(owner.y);
+  const ballLeft = bv < 0.5;
+  const nearV = ballLeft ? 0.43 : 0.57;
+  const farV = ballLeft ? 0.6 : 0.4;
+  const fws = team.active.filter((q) => q.role === 'FW' && q !== owner);
+  if (p.role === 'FW') {
+    if (fws.length <= 1) return { x: team.toX(0.885), y: team.toY(Math.abs(bv - 0.5) > 0.2 ? 0.5 : nearV) };
+    // 공에 가까운 공격수는 니어 포스트, 먼 쪽은 파 포스트
+    const sorted = fws.slice().sort((a, c) => Math.abs(team.v(a.y) - bv) - Math.abs(team.v(c.y) - bv));
+    return sorted[0] === p ? { x: team.toX(0.9), y: team.toY(nearV) } : { x: team.toX(0.88), y: team.toY(farV) };
+  }
+  if (p.slot.wide && p.role !== 'DF' && (bv - 0.5) * (p.slot.v - 0.5) < 0 && Math.abs(bv - 0.5) > 0.18) {
+    return { x: team.toX(0.87), y: team.toY(farV + (farV - 0.5) * 0.4) };
+  }
+  return null;
 }
 
 function supportSpot(m: Match, p: Player, owner: Player) {
@@ -300,19 +351,22 @@ function supportSpot(m: Match, p: Player, owner: Player) {
 function pressAI(m: Match, p: Player, dt: number, intensity: number) {
   const team = p.team;
   const o = m.ball.owner!;
+  if (m.ball.heldByKeeper) {
+    // 상대 키퍼가 공을 잡으면 페널티 박스 밖으로 물러난다
+    moveTo(p, team.toX(1 - 19 / PITCH_L), clamp(p.y, 10, PITCH_W - 10), 0.5, o.x, o.y);
+    return;
+  }
   const g = norm(team.ownGoalX - o.x, CY - o.y);
   // 공을 가진 선수와 골대 사이로 접근
   const tx = o.x + o.vx * 0.25 + g.x * 0.9;
   const ty = o.y + o.vy * 0.25 + g.y * 0.9;
   moveTo(p, tx, ty, 0.95, o.x, o.y);
-  if (m.ball.heldByKeeper) {
-    moveTo(p, o.x - team.dir * -8, o.y, 0.4, o.x, o.y);
-    return;
-  }
   const d = len(o.x - p.x, o.y - p.y);
   let rate = m.dp.tackleRate * intensity * (1 + team.tactics.pressing * 0.25);
   if (team.human) rate *= m.teammatePress ? 1 : 0.35;
-  if (d < 1.7 && p.canAct && chance(rate * dt)) {
+  // 사람이 공을 막 받았을 때는 첫 터치할 여유를 준다
+  const grace = !team.human && o.human && m.clock - m.ownerSince < m.dp.touchGrace;
+  if (d < 1.7 && p.canAct && !grace && chance(rate * dt)) {
     startTackle(m, p);
   } else if (!team.human && d > 1.6 && d < 3.2 && o.speed > 4 && p.canAct && chance(m.dp.slideRate * dt)) {
     p.facing = Math.atan2(o.y + o.vy * 0.3 - p.y, o.x + o.vx * 0.3 - p.x);
@@ -381,20 +435,22 @@ function carrierAI(m: Match, p: Player, dt: number) {
   }
   p.aiT = m.dp.decision * rand(0.75, 1.3);
 
-  const noise = () => gauss() * 0.006 * m.dp.noise;
+  // 판단 흔들림은 선택지 값에 비례 (값이 작은 수비 지역에서 무작위 선택이 되지 않게)
+  const noise = () => 1 + gauss() * 0.06 * m.dp.noise;
   const here = threat(team, p.x, p.y);
   const press = nearestOpp(opps, p.x, p.y).d;
   const lossProb = press < 1.3 ? 0.42 : press < 2.6 ? 0.2 : press < 5 ? 0.07 : 0.03;
   const ahead = { x: p.x + dd.x * 5, y: p.y + dd.y * 5 };
   const opts: Option[] = [];
-  opts.push({ kind: 'dribble', v: threat(team, ahead.x, ahead.y) * (1 - lossProb) + noise() + (dd.space > 10 ? 0.01 : 0) });
+  opts.push({ kind: 'dribble', v: (threat(team, ahead.x, ahead.y) * (1 - lossProb) + (dd.space > 10 ? 0.01 : 0)) * noise() });
 
   const dist = distToGoal(team, p.x, p.y);
   const ment = team.tactics.mentality + (team.shout === 'attack' ? 1 : 0);
   if (dist < 31) {
     const x = xg(team, opps, p.x, p.y);
-    opts.push({ kind: 'shot', v: x * (1.25 + ment * 0.08) * m.dp.shotBias + noise() + (dist < 12 ? 0.05 : 0) });
-    if (team.gauge >= 100 && dist < 34 && chance(m.dp.specialUse)) {
+    opts.push({ kind: 'shot', v: (x * (1.25 + ment * 0.08) * m.dp.shotBias + (dist < 12 ? 0.05 : 0)) * noise() });
+    // 필살기는 각도가 있는 좋은 위치에서
+    if (team.gauge >= 100 && dist < 30 && goalAngle(p.x, p.y, team.oppGoalX) > 0.22 && chance(m.dp.specialUse)) {
       opts.push({ kind: 'special', v: 1 });
     }
   }
@@ -406,18 +462,21 @@ function carrierAI(m: Match, p: Player, dt: number) {
     const d = len(dx, dy);
     if (d < 4 || d > 48) continue;
     const qOpen = nearestOpp(opps, q.x, q.y).d;
+    // 같은 동료에게 가는 패스·로빙·스루는 같은 흔들림을 공유 (선택지가 많은 쪽이 유리해지지 않게)
+    const nq = noise();
     if (q.isGK) {
-      if (press < 2 && team.u(p.x) < 0.35 && qOpen > 8) opts.push({ kind: 'pass', v: 0.012 + noise(), target: q });
+      if (press < 2 && team.u(p.x) < 0.35 && qOpen > 8) opts.push({ kind: 'pass', v: 0.012 * nq, target: q });
       continue;
     }
     const tx = q.x + q.vx * 0.5;
     const ty = q.y + q.vy * 0.5;
     const risk = laneRisk(opps, p.x, p.y, tx, ty, 17);
     const val = threat(team, tx, ty) * (qOpen < 1.8 ? 0.7 : qOpen > 5 ? 1.12 : 1);
-    if (d < 32) opts.push({ kind: 'pass', v: (1 - risk) * (1 - risk) * val * style - risk * 0.02 + noise(), target: q });
+    if (d < 32) opts.push({ kind: 'pass', v: ((1 - risk) * (1 - risk) * val * style - risk * 0.02) * nq, target: q });
     if (d > 16) {
       const lr = laneRisk(opps, p.x, p.y, tx, ty, 18, true);
-      opts.push({ kind: 'lob', v: (1 - lr) * (1 - lr) * val * 0.82 + noise(), target: q });
+      // 로빙은 받기가 어렵다
+      opts.push({ kind: 'lob', v: (1 - lr) * (1 - lr) * val * 0.7 * nq, target: q });
     }
     // 스루패스: 앞에 있는 공격수에게
     if ((q.role === 'FW' || q.role === 'MF') && team.u(q.x) > team.u(p.x) + 0.04) {
@@ -425,18 +484,22 @@ function carrierAI(m: Match, p: Player, dt: number) {
       const fx = clamp(q.x + team.dir * lead, 2, PITCH_L - 2);
       const fy = clamp(q.y + (CY - q.y) * 0.15, 3, PITCH_W - 3);
       const tr = laneRisk(opps, p.x, p.y, fx, fy, 19);
-      const open = nearestOpp(opps, fx, fy).d;
-      const tv = threat(team, fx, fy) * (open > 4 ? 1.1 : 0.6);
-      opts.push({ kind: 'through', v: (1 - tr) * (1 - tr) * tv * 0.95 + noise(), target: q, tx: fx, ty: fy });
+      // 받는 선수가 수비보다 먼저 그 지점에 닿는가
+      const rt = len(fx - q.x, fy - q.y) / 7.5 + 0.15;
+      let ot = Infinity;
+      for (const o of opps) ot = Math.min(ot, len(fx - o.x, fy - o.y) / 7.2);
+      const race = rt + 0.2 < ot ? 1.1 : rt < ot ? 0.6 : 0.2;
+      const tv = threat(team, fx, fy) * race;
+      opts.push({ kind: 'through', v: (1 - tr) * (1 - tr) * tv * 0.95 * nq, target: q, tx: fx, ty: fy });
     }
     // 크로스
     if (team.u(p.x) > 0.74 && Math.abs(p.y - CY) > 14 && inOppBox(team, q.x, q.y)) {
       const cx = xg(team, opps, q.x, q.y);
       const cr = laneRisk(opps, p.x, p.y, q.x, q.y, 18, true);
-      opts.push({ kind: 'cross', v: cx * 0.6 * (1 - cr * 0.6) + noise(), target: q });
+      opts.push({ kind: 'cross', v: cx * 0.6 * (1 - cr * 0.6) * nq, target: q });
     }
   }
-  if (team.u(p.x) < 0.22 && press < 2.2) opts.push({ kind: 'clear', v: here * 0.9 + 0.012 + noise() });
+  if (team.u(p.x) < 0.22 && press < 2.2) opts.push({ kind: 'clear', v: (here * 0.9 + 0.012) * noise() });
 
   let best = opts[0];
   for (const o of opts) if (o.v > best.v) best = o;
@@ -461,7 +524,8 @@ function carrierAI(m: Match, p: Player, dt: number) {
     case 'shot': {
       const gk = m.opp(team).gk;
       const side = gk.y > CY ? -1 : 1;
-      const dirY = side * rand(0.55, 1);
+      // 구석을 노린다 (빗나갈 위험과 맞바꿔 골 확률을 높인다)
+      const dirY = side * rand(0.8, 1.05);
       const power = clamp(0.42 + dist / 45 + gauss() * 0.06, 0.35, 0.86);
       const finesse = dist > 16 && dist < 26 && chance(0.35);
       beginKick(m, p, 'shot', power, team.dir, dirY, { finesse });
@@ -513,7 +577,7 @@ export function keeperAI(m: Match, gk: Player, dt: number) {
   }
   // 슛 대응은 match에서 처리, 여기선 위치 선정
   const ballD = len(b.x - gx, b.y - CY);
-  let out = ballD > 40 ? 9 : 1.2 + (ballD / 40) * 4;
+  let out = 1.2 + (Math.min(ballD, 40) / 40) * 4 + clamp((ballD - 40) / 20, 0, 1) * 3.8;
   // 일대일: 상대가 박스 안에서 공을 가졌다
   const o = b.owner;
   if (o && o.team !== team && inOwnBox(team, o.x, o.y) && ballD < 16) {

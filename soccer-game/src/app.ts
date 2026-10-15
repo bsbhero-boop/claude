@@ -22,7 +22,8 @@ import { Input } from './game/input';
 import { Match, assignLineup } from './game/match';
 import { clamp, pick, rand } from './game/math';
 import { Renderer } from './game/renderer';
-import type { Difficulty, MatchConfig, MatchResult, Tactics, TeamDef, TeamStats } from './game/types';
+import { particleLimit } from './game/particles';
+import type { Difficulty, MatchConfig, Tactics, TeamDef, TeamStats } from './game/types';
 import {
   ROUND_NAMES,
   TournamentState,
@@ -35,7 +36,9 @@ import {
   userFixture,
 } from './tournament';
 import { bar, crest, deltaTag, h, moraleBar, overallOf, seg, starText } from './ui/dom';
-import { TouchControls, isTouch } from './ui/touch';
+import { TouchContext, TouchControls, isTouch } from './ui/touch';
+import { controlMode } from './game/control';
+import { CY } from './game/constants';
 
 interface Settings {
   difficulty: Difficulty;
@@ -43,6 +46,10 @@ interface Settings {
   wide: boolean;
   sound: boolean;
   replay: boolean;
+  /** 터치 버튼: 자동(마지막 입력 기준) / 항상 / 끄기 */
+  touch: 'auto' | 'on' | 'off';
+  /** 골·필살기 때 휴대폰 진동 */
+  vibrate: boolean;
 }
 
 interface MatchSetup {
@@ -77,7 +84,7 @@ const PRESSING = [
 const SETTINGS_KEY = 'blaze-eleven-settings';
 
 function loadSettings(): Settings {
-  const def: Settings = { difficulty: 1, halfMinutes: 3, wide: false, sound: true, replay: true };
+  const def: Settings = { difficulty: 1, halfMinutes: 3, wide: false, sound: true, replay: true, touch: 'auto', vibrate: true };
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
     if (raw) return { ...def, ...JSON.parse(raw) };
@@ -122,6 +129,10 @@ export class App {
   private lastT = 0;
   private friendlyHome: TeamDef | null = null;
   private watchOnly = false;
+  /** 경기 화면에서 메뉴로 바뀐 직후, 연타한 키·클릭이 메뉴 버튼을 누르지 않게 막는 시각 */
+  private guardUntil = 0;
+  /** 마지막으로 쓴 입력 장치 (터치 버튼 자동 표시용) */
+  private lastInput: 'touch' | 'keys' = isTouch() ? 'touch' : 'keys';
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -133,7 +144,12 @@ export class App {
     this.demoInput.enabled = false;
     this.touch = new TouchControls(root, this.input, () => this.pauseMatch());
     audio.setMuted(!this.settings.sound);
-    window.addEventListener('resize', () => this.renderer.resize());
+    window.addEventListener('resize', () => {
+      this.renderer.resize();
+      this.pausedDrawn = false;
+    });
+    // 휴대폰은 파티클 수를 줄인다 (골 세리머니 프레임 저하 방지)
+    if (isTouch()) particleLimit.max = 900;
     // 첫 입력 시 오디오 시작
     const unlock = () => {
       audio.init();
@@ -141,20 +157,191 @@ export class App {
     };
     window.addEventListener('pointerdown', unlock);
     window.addEventListener('keydown', unlock);
+    // 일시정지 화면에서 Esc/P로 재개 (한 번만 등록, 한글 자판에서도 동작하도록 e.code)
+    window.addEventListener('keydown', (e) => {
+      if (e.repeat) return;
+      if ((e.code === 'Escape' || e.code === 'KeyP') && this.match?.paused && this.ui.querySelector('.screen.pause')) {
+        e.preventDefault();
+        this.resumeMatch();
+      }
+    });
+    // 경기 중 연타하던 Space/Enter·클릭이 막 열린 메뉴의 버튼을 누르지 않도록
+    const guardKey = (e: KeyboardEvent) => {
+      if (performance.now() < this.guardUntil && (e.code === 'Space' || e.code === 'Enter' || e.code === 'NumpadEnter')) e.preventDefault();
+    };
+    window.addEventListener('keydown', guardKey, true);
+    window.addEventListener('keyup', guardKey, true);
+    this.ui.addEventListener(
+      'click',
+      (e) => {
+        if (performance.now() < this.guardUntil) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      },
+      true,
+    );
+    // 입력 장치 전환: 터치하면 터치 버튼, 키보드·패드를 쓰면 숨김 (설정이 '자동'일 때)
+    window.addEventListener(
+      'pointerdown',
+      (e) => {
+        if (e.pointerType === 'touch' || e.pointerType === 'pen') this.setLastInput('touch');
+      },
+      true,
+    );
+    window.addEventListener('keydown', () => this.setLastInput('keys'), true);
+    // 화면을 탭하면 인트로·골 장면·리플레이 넘기기
+    this.canvas.addEventListener('pointerdown', () => {
+      const m = this.match;
+      if (m && !m.paused && (m.phase === 'intro' || m.phase === 'goal' || m.phase === 'replay')) this.input.tap();
+    });
+    // 앱이 백그라운드로 가면 자동 일시정지, 소리도 멈춤
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        if (this.match && !this.match.paused && !this.ui.childElementCount) this.pauseMatch();
+        audio.suspend();
+      } else audio.resume();
+    });
     this.startDemo();
     requestAnimationFrame(this.loop);
   }
 
   private loop = (t: number) => {
+    // 90/120Hz 화면에서도 60fps로만 그린다 (시뮬레이션은 60Hz 고정이라 더 그려도 같은 장면)
+    if (this.lastT && t - this.lastT < 10) {
+      requestAnimationFrame(this.loop);
+      return;
+    }
     const dt = this.lastT ? (t - this.lastT) / 1000 : 0.016;
     this.lastT = t;
+    this.adaptResolution(dt);
+    this.pollMenuPad();
     const m = this.match ?? this.demo;
-    if (m) {
+    // 불투명한 메뉴 뒤에서는 경기를 돌리지 않는다 (배터리, 끝난 경기 폭죽 소리)
+    const top = this.ui.firstElementChild;
+    const covered = !!top && !top.classList.contains('see-through');
+    // 일시정지 중에는 화면이 바뀌지 않으므로 한 번만 그린다
+    const frozen = !!m && m.paused && this.pausedDrawn;
+    if (covered) this.pausedDrawn = false;
+    if (m && !covered && !frozen) {
+      // 타이틀 배경 데모의 효과음만 끈다 (메뉴 클릭·팡파르 같은 UI 소리는 그대로)
+      audio.sfxOff = m === this.demo;
       m.frame(dt);
+      audio.sfxOff = false;
+      this.pausedDrawn = m.paused;
       this.renderer.render(m, dt);
+      if (this.match && this.renderer.touchMode) this.touch.update(this.touchContext(this.match));
     }
     requestAnimationFrame(this.loop);
   };
+
+  private pausedDrawn = false;
+  private slowT = 0;
+  private fastT = 0;
+  private dts: number[] = [];
+
+  /** 경기 중 프레임이 계속 느리면 해상도를 낮추고, 여유가 생기면 되돌린다 */
+  private adaptResolution(dt: number) {
+    const r = this.renderer;
+    // 컷인·필살 추격 장면은 그리는 양이 많으므로 그동안만 해상도 상한을 1.5로
+    const m = this.match;
+    const cine = !!m && (m.phase === 'cutin' || m.cine.w > 0.3);
+    const wantCap = cine ? 1.5 : 9;
+    if (r.cineCap !== wantCap) {
+      r.cineCap = wantCap;
+      r.resize();
+    }
+    if (!this.match || this.match.paused || this.ui.childElementCount || dt > 0.25) {
+      this.slowT = this.fastT = 0;
+      return;
+    }
+    // 느림 판단은 이 기기의 평소 프레임 간격 기준 (저전력 모드처럼 30Hz로 고정된 화면을 느리다고 오해하지 않게)
+    this.dts.push(dt);
+    if (this.dts.length > 90) this.dts.shift();
+    if (this.dts.length < 30) return;
+    const base = this.dts.slice().sort((a, b) => a - b)[Math.floor(this.dts.length * 0.2)];
+    if (dt > Math.max(0.02, base * 1.4)) {
+      this.slowT += dt;
+      this.fastT = 0;
+    } else {
+      this.fastT += dt;
+      this.slowT = Math.max(0, this.slowT - dt * 0.5);
+    }
+    const native = Math.min(window.devicePixelRatio || 1, 2);
+    if (this.slowT > 1.5 && r.dprCap > 1) {
+      r.dprCap = Math.max(1, Math.min(r.dprCap, native) - 0.25);
+      r.resize();
+      this.slowT = 0;
+    } else if (this.fastT > 20 && r.dprCap < native) {
+      r.dprCap = Math.min(native, r.dprCap + 0.25);
+      r.resize();
+      this.fastT = 0;
+    }
+  }
+
+  private padPrev: boolean[] = [];
+  private padDir = '';
+
+  /** 게임패드로 메뉴 조작: 십자키·스틱으로 이동, A 선택, B 뒤로, Start 경기 재개 */
+  private pollMenuPad() {
+    const pads = navigator.getGamepads ? Array.from(navigator.getGamepads()) : [];
+    const pad = pads.find((p) => !!p);
+    if (!pad) return;
+    if (pad.buttons.some((b) => b.pressed) || pad.axes.some((a) => Math.abs(a) > 0.5)) this.setLastInput('keys');
+    const pressed = (i: number) => !!pad.buttons[i]?.pressed;
+    const edge = (i: number) => pressed(i) && !this.padPrev[i];
+    const ax = pad.axes[0] ?? 0;
+    const ay = pad.axes[1] ?? 0;
+    const dir = pressed(12) || ay < -0.6 ? 'u' : pressed(13) || ay > 0.6 ? 'd' : pressed(14) || ax < -0.6 ? 'l' : pressed(15) || ax > 0.6 ? 'r' : '';
+    if (this.ui.childElementCount) {
+      if (dir && dir !== this.padDir) this.moveFocus(dir === 'u' || dir === 'l' ? -1 : 1);
+      if (edge(0)) (document.activeElement as HTMLElement | null)?.click();
+      if (edge(1)) {
+        const back = Array.from(this.ui.querySelectorAll<HTMLButtonElement>('button')).find((b) => /뒤로|돌아가기|계속하기/.test(b.textContent ?? ''));
+        back?.click();
+      }
+      if (edge(9) && this.match?.paused) this.resumeMatch();
+    }
+    this.padDir = dir;
+    this.padPrev = pad.buttons.map((b) => b.pressed);
+  }
+
+  private moveFocus(delta: number) {
+    const els = Array.from(this.ui.querySelectorAll<HTMLElement>('button:not([disabled])')).filter((e) => e.offsetParent !== null);
+    if (!els.length) return;
+    const i = els.indexOf(document.activeElement as HTMLElement);
+    const next = els[(i + delta + els.length) % els.length];
+    next.focus();
+    next.scrollIntoView({ block: 'nearest' });
+  }
+
+  /** 터치 버튼 라벨을 상황에 맞게 */
+  private touchContext(m: Match): TouchContext {
+    const user = m.humanTeam;
+    const base = { specialReady: !!user && user.gauge >= 100, tackleReady: !!user && user.gauge >= 50 };
+    if (!user || m.paused) return { mode: 'hidden', ...base };
+    // 필살 타이밍 대결: 내 컷인 중이거나, 상대 필살 슛이 날아오는 중
+    if (m.phase === 'cutin' && m.cutin?.p.team === user && m.cutin.duel === 'none') return { mode: 'duel', duelLabel: '타이밍!', ...base };
+    const sd = m.saveDuel;
+    const b = m.ball;
+    if (sd && sd.res === 'none' && b.guide && b.special && b.shot && !b.shot.judged && b.shot.side !== user.side) return { mode: 'duel', duelLabel: '막기!', ...base };
+    // 필살 추격·리플레이 같은 시네마틱 장면에서는 버튼을 숨겨 화면을 비운다
+    if (m.cine.w > 0.3) return { mode: 'hidden', ...base };
+    if (m.phase === 'intro' || m.phase === 'goal' || m.phase === 'replay' || m.phase === 'cutin' || m.phase === 'halftime' || m.phase === 'fulltime') return { mode: 'hidden', ...base };
+    if (m.phase === 'shootout') {
+      const so = m.shootout;
+      return { mode: so?.humanShooting ? 'shootout-shoot' : so?.humanKeeping ? 'shootout-keep' : 'hidden', ...base };
+    }
+    const sp = m.setPiece;
+    if ((m.phase === 'setpiece' || m.phase === 'kickoff') && sp && sp.side === user.side && sp.taker === user.controlled) {
+      return { mode: 'setpiece', setpiece: sp.kind, ...base };
+    }
+    if (m.phase === 'kickoff') return { mode: 'hidden', ...base };
+    const mode = controlMode(m, user);
+    const p = user.controlled;
+    const crossZone = !!p && user.u(p.x) > 0.68 && Math.abs(p.y - CY) > 11;
+    return { mode, crossZone, ...base };
+  }
 
   // ───────────────────────────── 데모 (타이틀 배경) ─────────────────────────────
 
@@ -176,10 +363,12 @@ export class App {
       stageName: '친선 경기',
       night: Math.random() < 0.5,
     };
-    this.demo = new Match(cfg, this.demoInput, {
-      onHalfTime: () => setTimeout(() => this.demo?.startSecondHalf(), 1200),
-      onFullTime: () => setTimeout(() => !this.match && this.startDemo(), 1500),
+    const d: Match = new Match(cfg, this.demoInput, {
+      onHalfTime: () => setTimeout(() => this.demo === d && d.startSecondHalf(), 1200),
+      onFullTime: () => setTimeout(() => this.demo === d && !this.match && this.startDemo(), 1500),
     });
+    d.isDemo = true;
+    this.demo = d;
     // 데모는 필살기가 자주 나오게
     this.demo.teams.forEach((t) => (t.gauge = rand(40, 80)));
   }
@@ -187,23 +376,45 @@ export class App {
   // ───────────────────────────── 화면 전환 ─────────────────────────────
 
   show(el: HTMLElement) {
+    // 경기 화면에서 바로 넘어온 메뉴는 잠깐 입력을 막는다 (슛·필살기 연타가 '넘어가기'를 누르는 사고 방지)
+    if (this.input.enabled && this.match) this.guardUntil = performance.now() + 650;
     this.ui.innerHTML = '';
     this.ui.appendChild(el);
     this.ui.scrollTop = 0;
     this.input.enabled = false;
     this.input.reset();
     this.touch.show(false);
-    const first = el.querySelector<HTMLElement>('[data-autofocus]') ?? el.querySelector<HTMLElement>('.btn.primary, .btn');
-    first?.focus({ preventScroll: true });
+    // 건너뛰기·뒤로 같은 버튼에는 자동 포커스를 주지 않는다
+    const first = el.querySelector<HTMLElement>('[data-autofocus]') ?? el.querySelector<HTMLElement>('.btn.primary, .btn.hot');
+    if (first) first.focus({ preventScroll: true });
+    else (document.activeElement as HTMLElement | null)?.blur?.();
+  }
+
+  private touchOn() {
+    const t = this.settings.touch;
+    return t === 'on' || (t === 'auto' && this.lastInput === 'touch');
+  }
+
+  private setLastInput(k: 'touch' | 'keys') {
+    if (this.lastInput === k) return;
+    this.lastInput = k;
+    if (this.match && !this.ui.childElementCount) this.applyTouch();
+  }
+
+  private applyTouch() {
+    const touch = this.touchOn() && !!this.match;
+    this.touch.show(touch);
+    this.renderer.touchMode = touch;
+    if (this.match) this.match.touchUI = touch;
   }
 
   hideUi() {
     this.ui.innerHTML = '';
     this.input.enabled = true;
     this.input.reset();
-    const touch = isTouch() && !!this.match?.humanTeam;
-    this.touch.show(touch);
-    this.renderer.touchMode = touch;
+    // 메뉴를 닫은 게임패드 A/B가 경기에서 패스·슛으로 이어지지 않게
+    this.input.swallowHeld();
+    this.applyTouch();
   }
 
   private click() {
@@ -213,19 +424,33 @@ export class App {
 
   // ───────────────────────────── 타이틀 ─────────────────────────────
 
-  showTitle() {
+  showTitle(confirmNew = false) {
     this.match = null;
     if (!this.demo) this.startDemo();
     const saved = loadTournament();
+    const startNew = () => {
+      this.click();
+      this.mode = 'tournament';
+      this.showTeamSelect('tournament');
+    };
     const menu = h(
       'div',
       { class: 'menu' },
       h(
         'button',
-        { class: 'btn primary', type: 'button', onclick: () => (this.click(), (this.mode = 'tournament'), this.showTeamSelect('tournament')) },
-        '토너먼트 시작',
+        { class: 'btn primary', type: 'button', onclick: () => (saved && !confirmNew ? (this.click(), this.showTitle(true)) : startNew()) },
+        saved ? '새 토너먼트' : '토너먼트 시작',
         h('small', null, '8강 → 4강 → 결승'),
       ),
+      confirmNew && saved
+        ? h(
+            'div',
+            { class: 'confirm' },
+            h('span', null, `진행 중인 토너먼트(${teamById(saved.userTeam).name} · ${ROUND_NAMES[saved.round]})는 새 팀을 고르면 지워집니다.`),
+            h('button', { class: 'btn', type: 'button', 'data-autofocus': true, onclick: startNew }, '새로 시작'),
+            h('button', { class: 'btn ghost', type: 'button', onclick: () => (this.click(), this.showTitle()) }, '취소'),
+          )
+        : null,
       saved &&
         h(
           'button',
@@ -236,7 +461,6 @@ export class App {
               this.click();
               this.mode = 'tournament';
               this.tour = saved;
-              this.settings.difficulty = saved.difficulty;
               this.showBracket();
             },
           },
@@ -276,10 +500,18 @@ export class App {
 
   showSettings() {
     const s = this.settings;
+    const running = loadTournament();
     const save = () => {
       saveSettings(s);
       audio.setMuted(!s.sound);
       this.renderer.wide = s.wide;
+      // 진행 중인 토너먼트에도 난이도·경기 시간을 반영
+      const t = loadTournament();
+      if (t && (t.difficulty !== s.difficulty || t.halfMinutes !== s.halfMinutes)) {
+        t.difficulty = s.difficulty;
+        t.halfMinutes = s.halfMinutes;
+        saveTournament(t);
+      }
     };
     this.show(
       h(
@@ -296,7 +528,7 @@ export class App {
             h(
               'div',
               null,
-              h('div', { class: 'field-label' }, '난이도 — CPU의 판단 속도, 패스 정확도, 태클 적극성, 골키퍼 능력'),
+              h('div', { class: 'field-label' }, '난이도 — CPU의 판단 속도, 패스 정확도, 태클 적극성, 골키퍼 능력' + (running ? ' (진행 중인 토너먼트에도 적용)' : '')),
               seg(
                 DIFF_LABELS.map((l, i) => ({ v: i as Difficulty, label: l })),
                 s.difficulty,
@@ -327,6 +559,35 @@ export class App {
                 s.wide ? 'w' : 'n',
                 (v) => ((s.wide = v === 'w'), save()),
                 'set-cam',
+              ),
+            ),
+            h(
+              'div',
+              null,
+              h('div', { class: 'field-label' }, '터치 버튼 (휴대폰·태블릿)'),
+              seg(
+                [
+                  { v: 'auto', label: '자동' },
+                  { v: 'on', label: '항상 표시' },
+                  { v: 'off', label: '끄기' },
+                ],
+                s.touch,
+                (v) => ((s.touch = v as Settings['touch']), save()),
+                'set-touch',
+              ),
+            ),
+            h(
+              'div',
+              null,
+              h('div', { class: 'field-label' }, '진동 (지원하는 휴대폰에서 골·필살기 때)'),
+              seg(
+                [
+                  { v: 'on', label: '켜기' },
+                  { v: 'off', label: '끄기' },
+                ],
+                s.vibrate ? 'on' : 'off',
+                (v) => ((s.vibrate = v === 'on'), save()),
+                'set-vibrate',
               ),
             ),
             h(
@@ -366,6 +627,30 @@ export class App {
 
   showControls(back: () => void) {
     const row = (keys: string[], desc: string) => h('tr', null, h('td', null, ...keys.map((k) => h('kbd', null, k))), h('td', null, desc));
+    const touchPanel = h(
+      'div',
+      { class: 'panel' },
+      h('h3', { style: 'margin-bottom:8px' }, '터치 (휴대폰·태블릿)'),
+      h(
+        'table',
+        null,
+        h(
+          'tbody',
+          null,
+          row(['왼쪽 화면'], '아무 곳이나 누른 채 끌면 이동 — 조이스틱이 손가락 자리에 생긴다'),
+          row(['슛'], '길게 눌러 파워 · 킥 직전 다시 누르면 타이밍 피니시'),
+          row(['슛', '↑'], '위로 밀며 떼면 칩슛'),
+          row(['슛', '↔'], '옆으로 밀며 떼면 감아차기'),
+          row(['패스', '스루', '로빙'], '길게 누를수록 멀리 · 측면에서는 로빙이 크로스'),
+          row(['필살'], '게이지 100%가 되면 버튼이 빛난다 · 컷인 중 막대가 초록일 때 슛 버튼'),
+          row(['막기!'], '상대 필살 슛이 올 때 키퍼 고리가 초록이면 누르기'),
+          row(['수비'], '버튼이 태클 · 전환 · 슬라이딩 · 압박 · 필살태클로 바뀐다'),
+          row(['화면 탭'], '골 장면 · 리플레이 넘기기'),
+          row(['II'], '일시정지 · 터치라인 지시'),
+        ),
+      ),
+    );
+    const touchFirst = this.touchOn() || isTouch();
     this.show(
       h(
         'div',
@@ -378,6 +663,7 @@ export class App {
           h(
             'div',
             { class: 'keys' },
+            touchFirst ? touchPanel : null,
             h(
               'div',
               { class: 'panel' },
@@ -399,6 +685,7 @@ export class App {
                   row(['Q', '+', 'K'], '칩슛 — 키퍼 키를 넘긴다'),
                   row(['U'], '개인기 (방향에 따라 다름)'),
                   row(['Space'], '필살기 — 게이지 100%, 골문 42m 이내'),
+                  row(['K'], '필살 컷인 중 막대가 초록일 때 — PERFECT 필살 슛'),
                 ),
               ),
             ),
@@ -417,6 +704,7 @@ export class App {
                   row(['L'], '슬라이딩 태클 — 뒤에서 하면 파울·카드'),
                   row(['I'], '누르고 있는 동안 동료가 압박'),
                   row(['Space'], '필살 태클 — 게이지 50%, 반드시 빼앗는다'),
+                  row(['K'], '상대 필살 슛 — 키퍼 고리가 초록일 때 눌러 선방'),
                   row(['Esc', 'P'], '일시정지 · 터치라인 지시'),
                 ),
               ),
@@ -434,11 +722,12 @@ export class App {
                 ),
               ),
             ),
+            touchFirst ? null : touchPanel,
           ),
           h(
             'div',
             { class: 'grid two' },
-            h('p', { class: 'tip' }, '방향키로 이동하는 사람은 Z(패스) · X(슛) · C(스루) · V(로빙)도 쓸 수 있습니다. 게임패드는 A 패스, B 슛, Y 스루, X 로빙, RT 질주, RB 감아차기, LT 개인기, LB 필살기입니다.'),
+            h('p', { class: 'tip' }, '방향키로 이동하는 사람은 Z(패스) · X(슛) · C(스루) · V(로빙)도 쓸 수 있습니다. 게임패드는 A 패스, B 슛, Y 스루, X 로빙, RT 질주, RB 감아차기, 왼쪽 스틱 누르기 칩슛, LT 개인기, LB 필살기, Start 일시정지입니다. 메뉴는 십자키로 고르고 A로 선택합니다.'),
             h('p', { class: 'tip' }, '필살 게이지는 패스 성공, 태클, 개인기, 선방, 그리고 실점했을 때 크게 찹니다. 선수들의 사기가 높을수록 빨리 차고, 공을 받으며 버튼을 미리 눌러 두면 원터치로 처리합니다.'),
           ),
           h('div', { class: 'row end' }, h('button', { class: 'btn primary', type: 'button', onclick: () => (this.click(), back()) }, '돌아가기')),
@@ -625,6 +914,7 @@ export class App {
   // ───────────────────────────── 경기 준비 (FM 스타일) ─────────────────────────────
 
   prepareMatch(user: TeamDef, opp: TeamDef, humanSide: 0 | -1, stageName: string, stageIdx: number, knockout: boolean) {
+    if (this.match) this.leaveMatch();
     const baseMorale = this.mode === 'tournament' && this.tour ? this.tour.morale.slice() : user.players.map(() => 0.3);
     this.setup = {
       home: user,
@@ -959,13 +1249,15 @@ export class App {
       stageName: st.stageName,
       night: st.night,
     };
-    const m = new Match(cfg, this.input, {
-      onHalfTime: () => this.showHalfTime(),
-      onFullTime: () => this.showFullTime(),
-      onShootoutEnd: () => this.showFullTime(),
+    // 콜백은 지연 실행되므로, 그 사이 경기를 나갔다면 무시한다
+    const m: Match = new Match(cfg, this.input, {
+      onHalfTime: () => this.match === m && this.showHalfTime(),
+      onFullTime: () => this.match === m && this.showFullTime(),
+      onShootoutEnd: () => this.match === m && this.showFullTime(),
       onPause: () => this.pauseMatch(),
     });
     m.replayEnabled = this.settings.replay;
+    m.haptics = this.settings.vibrate;
     if (st.humanSide === 0) m.teams[0].gauge = st.startGauge;
     this.match = m;
     this.hideUi();
@@ -976,7 +1268,7 @@ export class App {
 
   pauseMatch() {
     const m = this.match;
-    if (!m || m.paused || m.phase === 'halftime' || m.phase === 'fulltime') return;
+    if (!m || m.paused || m.phase === 'halftime' || m.phase === 'fulltime' || m.shootout?.stage === 'done') return;
     m.paused = true;
     const user = m.humanTeam;
     let confirmExit = false;
@@ -1015,7 +1307,7 @@ export class App {
         ? h(
             'div',
             { class: 'confirm' },
-            h('span', null, this.mode === 'tournament' ? '경기를 포기하면 패배로 처리됩니다.' : '경기를 끝내고 타이틀로 갈까요?'),
+            h('span', null, this.mode === 'tournament' ? '이 경기는 기록되지 않습니다. 이어하기로 같은 경기를 처음부터 다시 치를 수 있어요.' : '경기를 끝내고 타이틀로 갈까요?'),
             h('button', { class: 'btn', type: 'button', onclick: () => this.abandonMatch() }, '나가기'),
             h('button', { class: 'btn ghost', type: 'button', onclick: () => ((confirmExit = false), render()) }, '취소'),
           )
@@ -1043,13 +1335,6 @@ export class App {
           ),
         ),
       );
-      const esc = (e: KeyboardEvent) => {
-        if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') {
-          window.removeEventListener('keydown', esc);
-          this.resumeMatch();
-        }
-      };
-      setTimeout(() => window.addEventListener('keydown', esc, { once: true }), 50);
     };
     render();
   }
@@ -1059,19 +1344,13 @@ export class App {
     if (!m || !m.paused) return;
     this.hideUi();
     m.paused = false;
+    m.resumedAt = m.realTime;
   }
 
   abandonMatch() {
     const m = this.match;
     if (!m) return;
-    if (this.mode === 'tournament' && this.tour) {
-      // 몰수패
-      const user = m.teams[0];
-      const r: MatchResult = { ...m.result(), homeGoals: Math.min(user.goals, m.teams[1].goals), awayGoals: Math.max(m.teams[1].goals, user.goals + 1) };
-      recordUserMatch(this.tour, m.cfg.home.id, m.cfg.away.id, r);
-      simulateRest(this.tour);
-      saveTournament(null);
-    }
+    // 토너먼트는 경기 전 상태로 저장돼 있으므로 기록 없이 나간다 (새로고침과 같은 결과)
     this.match = null;
     this.startDemo();
     this.showTitle();
@@ -1145,6 +1424,7 @@ export class App {
 
   showHalfTime() {
     const m = this.match!;
+    m.paused = false;
     const user = m.humanTeam;
     // CPU 하프타임 조정
     for (const t of m.teams) {
@@ -1155,7 +1435,7 @@ export class App {
       for (const p of t.players) p.morale = clamp(p.morale + rand(-0.3, 0.4) + (diff < 0 ? 0.15 : 0), -3, 3);
     }
     if (!user) {
-      setTimeout(() => m.startSecondHalf(), 300);
+      setTimeout(() => this.match === m && m.startSecondHalf(), 300);
       return;
     }
     const st = this.setup!;
@@ -1197,9 +1477,9 @@ export class App {
             { class: 'wrap' },
             h('div', { class: 'eyebrow' }, `${st.stageName} · 하프타임`),
             this.scoreline(m),
-            h('div', { class: 'grid three', style: 'align-items:start' }, h('div', { class: 'panel' }, h('h3', { style: 'margin-bottom:12px' }, '전반 기록'), this.statsPanel(m)), h('div', { class: 'panel' }, h('h3', { style: 'margin-bottom:12px' }, '전반 평점'), this.ratingsPanel(m, user.side)), tacticsBox),
             body,
             stage === 'ace' ? h('div', { class: 'row end' }, h('button', { class: 'btn ghost', type: 'button', onclick: () => (this.click(), startSecond()) }, '면담 없이 후반 시작')) : null,
+            h('div', { class: 'grid three', style: 'align-items:start' }, tacticsBox, h('div', { class: 'panel' }, h('h3', { style: 'margin-bottom:12px' }, '전반 기록'), this.statsPanel(m)), h('div', { class: 'panel' }, h('h3', { style: 'margin-bottom:12px' }, '전반 평점'), this.ratingsPanel(m, user.side))),
           ),
         ),
       );
@@ -1211,6 +1491,7 @@ export class App {
 
   showFullTime() {
     const m = this.match!;
+    m.paused = false;
     const res = m.result();
     const user = m.humanTeam;
     const draw = res.homeGoals === res.awayGoals;
@@ -1226,7 +1507,15 @@ export class App {
             h('div', { class: 'eyebrow' }, '정규 시간 종료'),
             this.scoreline(m),
             h('h2', null, '승부차기로 승자를 가립니다'),
-            h('p', { class: 'muted' }, user ? '키커일 때: 방향키로 조준하고 K를 길게 눌렀다 떼세요. 키퍼일 때: 방향키로 다이빙 방향을 고르고 K로 확정하세요.' : 'CPU끼리의 승부차기입니다.'),
+            h(
+              'p',
+              { class: 'muted' },
+              !user
+                ? 'CPU끼리의 승부차기입니다.'
+                : this.touchOn()
+                  ? '키커일 때: 스틱으로 조준하고 슛 버튼을 길게 눌렀다 떼세요. 키퍼일 때: 스틱으로 다이빙 방향을 고르고 확정 버튼을 누르세요.'
+                  : '키커일 때: 방향키로 조준하고 K를 길게 눌렀다 떼세요. 키퍼일 때: 방향키로 다이빙 방향을 고르고 K로 확정하세요.',
+            ),
             h(
               'div',
               { class: 'row center' },
@@ -1258,6 +1547,7 @@ export class App {
     if (this.mode === 'tournament' && this.tour && user) {
       const tour = this.tour;
       const isFinal = tour.round === 2;
+      const played = tour.round;
       recordUserMatch(tour, m.cfg.home.id, m.cfg.away.id, res);
       // 사기 반영
       const morale = user.def.players.map((d) => user.players.find((p) => p.def === d)?.morale ?? 0);
@@ -1265,7 +1555,7 @@ export class App {
       if (tour.eliminated) {
         simulateRest(tour);
         saveTournament(null);
-        headline = `${ROUND_NAMES[tour.round - 1]} 탈락`;
+        headline = isFinal ? '준우승' : `${ROUND_NAMES[played]} 탈락`;
         actions = h(
           'div',
           { class: 'row end' },
@@ -1279,7 +1569,7 @@ export class App {
         m.celebrateTeam = user.side;
       } else {
         saveTournament(tour);
-        headline = `${ROUND_NAMES[tour.round - 1]} 승리! ${ROUND_NAMES[tour.round]} 진출`;
+        headline = `${ROUND_NAMES[played]} 승리! ${ROUND_NAMES[played + 1]} 진출`;
         actions = h('div', { class: 'row end' }, h('button', { class: 'btn primary', type: 'button', 'data-autofocus': true, onclick: () => (this.click(), this.showPostTalk()) }, '경기 후 라커룸'));
         m.celebrateTeam = user.side;
       }

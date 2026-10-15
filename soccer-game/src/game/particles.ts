@@ -46,7 +46,8 @@ export interface Bolt {
   width: number;
 }
 
-const MAX = 2200;
+/** 동시에 존재할 수 있는 파티클 수 (휴대폰에서는 줄인다) */
+export const particleLimit = { max: 2200 };
 
 export class Particles {
   list: Particle[] = [];
@@ -55,7 +56,7 @@ export class Particles {
   private pool: Particle[] = [];
 
   spawn(p: Partial<Particle> & { x: number; y: number; z: number }) {
-    if (this.list.length >= MAX) return;
+    if (this.list.length >= particleLimit.max) return;
     const q = this.pool.pop() ?? ({} as Particle);
     q.x = p.x;
     q.y = p.y;

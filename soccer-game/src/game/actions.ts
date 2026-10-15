@@ -101,7 +101,7 @@ export function choosePassTarget(m: Match, p: Player, dirX: number, dirY: number
     }
   }
   // 살짝 누른 땅볼 패스는 관대하게: 방향 근처에 아무도 없으면 넓은 범위에서 다시 찾는다
-  if (!best && kind === 'pass' && !manualDist) {
+  if (!best && kind === 'pass') {
     for (const q of mates) {
       if (q.isGK) continue;
       const dx = q.x - p.x;
@@ -162,12 +162,15 @@ export function executeKick(m: Match, p: Player) {
   const k = p.kick;
   p.kick = null;
   if (!k) return;
+  // 휘슬 이후(아웃·파울)에는 세트피스 키커 말고는 공을 차지 않는다
+  if (m.phase !== 'play' && !(m.setPiece && m.setPiece.taker === p)) return;
   const b = m.ball;
   // 와인드업 사이 공을 빼앗겼거나 멀어진 경우 헛발질
   const reach = k.kind === 'header' ? 1.6 : 1.25;
   const owns = b.owner === p;
   const near = len(b.x - p.x, b.y - p.y) < reach && b.z < (k.kind === 'header' ? 2.9 : 1.2);
   if (!owns && !(near && !b.owner)) {
+    if (k.kind === 'special') p.team.gauge = 100;
     return;
   }
   if (k.kind === 'special') {
@@ -270,28 +273,31 @@ export function performPass(m: Match, p: Player, k: PendingKick) {
 /** 골문 통과 지점 예측 (단순 물리) */
 export function predictGoalCross(m: Match, gx: number) {
   const b = m.ball;
-  let x = b.x,
-    y = b.y,
-    z = b.z,
-    vx = b.vx,
-    vy = b.vy,
-    vz = b.vz,
-    spin = b.spin;
+  return crossAt(b.x, b.y, b.z, b.vx, b.vy, b.vz, b.spin, b.dip, gx);
+}
+
+/** 주어진 초기 상태에서 x = gx 평면을 지나는 시점·위치 (공 물리와 같은 규칙) */
+export function crossAt(x: number, y: number, z: number, vx: number, vy: number, vz: number, spin: number, dip: number, gx: number) {
   const dt = 1 / 60;
   for (let t = 0; t < 3; t += dt) {
     const sp = Math.sqrt(vx * vx + vy * vy);
     if (z > 0.02 || vz > 0.5) {
-      vz -= (GRAVITY + b.dip) * dt;
+      vz -= (GRAVITY + dip) * dt;
+      vx *= Math.exp(-0.06 * dt);
+      vy *= Math.exp(-0.06 * dt);
     } else if (sp > 0) {
       const ns = Math.max(0, sp - (1.4 + 0.42 * sp) * dt);
       vx *= ns / sp;
       vy *= ns / sp;
     }
     if (spin !== 0 && sp > 2) {
-      vx += (-vy / sp) * spin * dt;
-      vy += (vx / sp) * spin * dt;
+      const ax = (-vy / sp) * spin;
+      const ay = (vx / sp) * spin;
+      vx += ax * dt;
+      vy += ay * dt;
       spin *= Math.exp(-0.7 * dt);
     }
+    dip *= Math.exp(-1.2 * dt);
     const px = x;
     x += vx * dt;
     y += vy * dt;
@@ -318,7 +324,7 @@ export function performShot(m: Match, p: Player, k: PendingKick) {
   // 조준: 방향키의 세로 성분이 골문 좌우를 결정
   const lateral = Math.abs(k.dirY) > 0.25 ? clamp(k.dirY * 1.15, -1, 1) : 0;
   let aimY: number;
-  if (lateral !== 0) aimY = CY + lateral * (GOAL_HALF_W - 0.45);
+  if (lateral !== 0) aimY = CY + lateral * (GOAL_HALF_W - 0.35);
   else {
     // 기본: 먼 포스트 쪽
     const far = b.y < CY ? 1 : -1;
@@ -331,13 +337,14 @@ export function performShot(m: Match, p: Player, k: PendingKick) {
   const press = nearestOpp(opps, p.x, p.y).d;
   const pressure = press < 1.3 ? 1 : press < 2.5 ? 0.5 : 0;
   const balance = p.speed > 7.5 ? 0.25 : 0;
-  let err = (0.022 + (1 - p.def.sho / 99) * 0.07) * (1 + pressure * 0.6 + balance) * (1 + D / 32);
+  let err = (0.026 + (1 - p.def.sho / 99) * 0.07) * (1 + pressure * 0.6 + balance) * (1 + D / 24);
   if (k.timing === 'perfect') err *= 0.35;
   else if (k.timing === 'early') err *= 1.7;
   if (k.finesse) err *= 0.85;
   if (isHeader) err *= 1.4;
   err /= p.moraleMul;
-  if (!team.human) err *= m.dp.cpuErr;
+  // CPU 슛은 사람보다 덜 정확하게 (유효슈팅 비율이 너무 높으면 키퍼 선방만 반복된다)
+  if (!team.human) err *= m.dp.cpuErr * 1.4;
 
   let speed = (16 + power * 15) * (0.84 + (p.def.sho / 99) * 0.24) * (isHeader ? 0.62 : 1);
   if (k.timing === 'perfect') speed *= 1.06;
@@ -348,28 +355,36 @@ export function performShot(m: Match, p: Player, k: PendingKick) {
     const toward = Math.sign(CY - aimY) || 1;
     spin = toward * team.dir * (6 + (p.def.sho / 99) * 4);
   }
-  if (k.chip) {
-    speed = 11 + power * 6;
-    aimZ = 2.0;
-  }
   const dx = gx - b.x;
-  const dy = aimY - b.y;
-  const H = len(dx, dy);
-  let T = H / speed;
-  if (spin !== 0) {
-    // 휘어 들어올 양만큼 반대쪽으로 겨냥 (회전 가속은 속도의 왼쪽 수직 방향)
-    const curl = 0.5 * Math.abs(spin) * T * T * 0.62;
-    const perpY = dx / H;
-    aimY -= perpY * curl * Math.sign(spin);
+  const dy0 = aimY - b.y;
+  const H = len(dx, dy0);
+  if (k.chip) {
+    // 칩슛: 긴 체공 시간으로 키퍼 키를 넘기고 크로스바 아래로 떨어진다
+    speed = H / (0.9 + H / 20);
+    aimZ = 1.5;
   }
-  const ang = Math.atan2(aimY - b.y, gx - b.x) + gauss() * err;
   const vh = speed;
-  T = H / vh;
-  let vz = (aimZ - b.z + 0.5 * GRAVITY * T * T) / T;
-  if (k.chip) vz = (aimZ - b.z + 0.5 * GRAVITY * T * T) / T + 1.5;
+  const T = H / vh;
+  // 강슛의 탑스핀(추가 낙하)까지 고려해서 목표 높이에 닿도록
+  const dip = !k.finesse && !k.chip && power > 0.6 ? 2 + power * 3 : 0;
+  const dipAvg = dip > 0 ? (dip * (1 - Math.exp(-1.2 * T))) / (1.2 * T) : 0;
+  let vz = (aimZ - b.z + 0.5 * (GRAVITY + dipAvg) * T * T) / T;
+  // 일반 슛은 파워만큼만 뜬다: 약하게 찬 먼 거리 슛이 포물선으로 골문까지 날아가지 않게 (칩슛 제외)
+  if (!k.chip) vz = Math.min(vz, (isHeader ? 3 : 3.5) + power * 4.5);
+  else vz = Math.min(vz, 14);
+  let ang = Math.atan2(aimY - b.y, dx);
+  if (spin !== 0) {
+    // 감아차기: 휘는 궤적을 직접 계산해 골라인에서 조준점에 닿는 발사각을 찾는다
+    for (let i = 0; i < 4; i++) {
+      const c = crossAt(b.x, b.y, b.z, Math.cos(ang) * vh, Math.sin(ang) * vh, vz, spin, 0, gx);
+      if (!c) break;
+      ang -= (c.y - aimY) / dx;
+    }
+  }
+  ang += gauss() * err;
   vz += gauss() * err * 14;
   kickBall(m, p, Math.cos(ang) * vh, Math.sin(ang) * vh, vz, spin, 0.7 + power * 0.3);
-  if (!k.finesse && !k.chip && power > 0.6) b.dip = 2 + power * 3;
+  b.dip = dip;
   const cross = predictGoalCross(m, gx);
   b.shot = {
     by: p,
@@ -435,7 +450,9 @@ export function skillMove(m: Match, p: Player, dirX: number, dirY: number) {
     p.skillDY = f.y;
     m.popup(p, '헛다리!', '#9be15d');
   }
-  m.addGauge(p.team, 3);
+  // 수비수 앞에서 쓴 개인기만 게이지를 준다 (연타로 게이지 벌기 방지)
+  const opp = m.opp(p.team).active.some((o) => len(o.x - p.x, o.y - p.y) < 3);
+  if (opp) m.addGauge(p.team, 2);
 }
 
 export function startTackle(m: Match, p: Player) {
@@ -443,7 +460,7 @@ export function startTackle(m: Match, p: Player) {
   p.setState('tackle', 0.38);
   p.tackleResolved = false;
   const b = m.ball;
-  const d = norm(b.x - p.x, b.y - p.y);
+  const d = norm(b.x + b.vx * 0.15 - p.x, b.y + b.vy * 0.15 - p.y);
   p.vx = d.x * 6.5;
   p.vy = d.y * 6.5;
   p.facing = Math.atan2(d.y, d.x);
@@ -467,6 +484,7 @@ export function startSlide(m: Match, p: Player) {
 /** 태클 판정 (매 틱) */
 export function resolveTackles(m: Match) {
   const b = m.ball;
+  if (b.guide) return;
   for (const team of m.teams) {
     for (const p of team.active) {
       if (p.tackleResolved) continue;
@@ -474,7 +492,8 @@ export function resolveTackles(m: Match) {
         const footX = p.x + Math.cos(p.facing) * 0.6;
         const footY = p.y + Math.sin(p.facing) * 0.6;
         const d = len(b.x - footX, b.y - footY);
-        if (d < 1.0 && b.z < 0.9) {
+        // 사람의 스탠딩 태클은 난이도에 따라 조금 더 넓게 닿는다
+        if (d < (p.team.human ? 1.1 + m.dp.humanAssist * 1.5 : 1.1) && b.z < 0.9) {
           p.tackleResolved = true;
           const o = b.owner;
           if (!o) {
@@ -483,7 +502,7 @@ export function resolveTackles(m: Match) {
           }
           if (o.team === p.team) continue;
           const behind = Math.abs(angleDiff(o.facing, Math.atan2(p.y - o.y, p.x - o.x))) > 2.2;
-          let prob = 0.5 + (p.def.def - o.def.dri) / 100 + (p.team.human ? 0.08 : m.dp.cpuTackle);
+          let prob = 0.5 + (p.def.def - o.def.dri) / 100 + (p.team.human ? 0.08 + m.dp.humanAssist : m.dp.cpuTackle);
           if (o.evade > 0) prob *= 0.3;
           if (behind) prob -= 0.15;
           prob = clamp(prob * (p.moraleMul / o.moraleMul), 0.12, 0.88);
@@ -493,7 +512,7 @@ export function resolveTackles(m: Match) {
             p.st.tackles++;
             o.st.lost++;
             audio.tackle();
-            m.addGauge(p.team, 6);
+            m.addGauge(p.team, 4);
             if (chance(0.55)) {
               m.gainPossession(p);
             } else {
@@ -506,7 +525,7 @@ export function resolveTackles(m: Match) {
             }
             o.setState('stumble', 0.45);
             m.say(`${p.def.name}, 깔끔한 태클로 공을 빼앗습니다!`);
-          } else if (behind && chance(0.3)) {
+          } else if (behind && chance(0.2)) {
             m.foul(p, o, false);
           } else {
             p.setState('stumble', 0.4);
@@ -539,7 +558,7 @@ export function resolveTackles(m: Match) {
             p.team.stats.tackles++;
             p.st.tackles++;
             audio.tackle();
-            m.addGauge(p.team, 7);
+            m.addGauge(p.team, 5);
             m.say(`${p.def.name}의 슬라이딩 태클! 공을 걷어냅니다!`);
             continue;
           }
@@ -570,9 +589,16 @@ export function resolveTackles(m: Match) {
 /** 필살 태클: 공 소유자에게 돌진해 반드시 빼앗는다 */
 export function specialTackle(m: Match, p: Player) {
   const o = m.ball.owner;
-  if (!o || o.team === p.team) return false;
-  if (len(o.x - p.x, o.y - p.y) > 14) return false;
-  p.setState('charge', 0.6);
+  if (!o || o.team === p.team || !p.canAct) return false;
+  if (o.isGK && m.ball.heldByKeeper) {
+    m.popup(p, '키퍼가 잡은 공은 못 뺏는다', '#ff9a9a');
+    return true;
+  }
+  const dist = len(o.x - p.x, o.y - p.y);
+  const away = dist > 0.01 ? (o.vx * (o.x - p.x) + o.vy * (o.y - p.y)) / dist : 0;
+  const reach = (15 - Math.max(0, away)) * 0.7 + 1.4;
+  if (dist > Math.min(14, reach)) return false;
+  p.setState('charge', 0.7);
   p.tackleResolved = false;
   p.aura = 1.2;
   m.addGauge(p.team, -50);
@@ -610,7 +636,7 @@ export function updateCharge(m: Match, p: Player, dt: number) {
       kind: 'glow',
     });
   }
-  if (!p.tackleResolved && len(b.x - p.x, b.y - p.y) < 1.4) {
+  if (!p.tackleResolved && len(b.x - p.x, b.y - p.y) < 1.4 && !b.heldByKeeper && b.z < 1.5 && m.phase === 'play') {
     p.tackleResolved = true;
     const o = b.owner;
     if (o && o.team !== p.team) {
@@ -650,7 +676,8 @@ export function launchSpecial(m: Match, p: Player, k: PendingKick) {
   const b = m.ball;
   const type = team.def.special.type;
   const gx = team.oppGoalX;
-  const inside = team.dir > 0 ? gx + 1.4 : gx - 1.4;
+  // 본 궤적은 골라인 1.5m 앞 골문 입구에서 끝나고, 마지막 구간은 골망 쪽으로 곧게 들어간다
+  const inside = gx - team.dir * 1.5;
   const lateral = Math.abs(k.dirY) > 0.25 ? Math.sign(k.dirY) : b.y < CY ? 1 : -1;
   const ey = CY + lateral * rand(1.9, 3.0);
   const ez = rand(0.6, 1.9);
@@ -660,6 +687,8 @@ export function launchSpecial(m: Match, p: Player, k: PendingKick) {
   const D = len(gx - sx, ey - sy);
   const ace = p.def.ace;
   const perp = norm(-(ey - sy), gx - sx);
+  // 가까운 거리에서는 휘는 폭을 줄여 골문을 벗어나지 않게
+  const wig = Math.min(1, D / 20);
   let path: (t: number) => [number, number, number];
   let T: number;
   const lerp3 = (t: number, ax: number, ay: number, az: number, bx: number, by: number, bz: number): [number, number, number] => [
@@ -670,8 +699,8 @@ export function launchSpecial(m: Match, p: Player, k: PendingKick) {
   // 골라인 이후로 조금 더 진행 (골망까지)
   switch (type) {
     case 'thunder': {
-      const w1 = { x: sx + (gx - sx) * 0.33 + perp.x * 4.5, y: sy + (ey - sy) * 0.33 + perp.y * 4.5, z: 1.4 };
-      const w2 = { x: sx + (gx - sx) * 0.66 - perp.x * 4.5, y: sy + (ey - sy) * 0.66 - perp.y * 4.5, z: 2.6 };
+      const w1 = { x: sx + (gx - sx) * 0.33 + perp.x * 4.5 * wig, y: sy + (ey - sy) * 0.33 + perp.y * 4.5 * wig, z: 1.4 };
+      const w2 = { x: sx + (gx - sx) * 0.66 - perp.x * 4.5 * wig, y: sy + (ey - sy) * 0.66 - perp.y * 4.5 * wig, z: 2.6 };
       const pts = [
         { x: sx, y: sy, z: sz },
         w1,
@@ -697,8 +726,8 @@ export function launchSpecial(m: Match, p: Player, k: PendingKick) {
     }
     case 'tornado': {
       const side = Math.random() < 0.5 ? 1 : -1;
-      const cx = sx + (gx - sx) * 0.5 + perp.x * 13 * side;
-      const cy = sy + (ey - sy) * 0.5 + perp.y * 13 * side;
+      const cx = sx + (gx - sx) * 0.5 + perp.x * 13 * side * wig;
+      const cy = sy + (ey - sy) * 0.5 + perp.y * 13 * side * wig;
       const cz = 5;
       path = (t) => {
         const a = (1 - t) * (1 - t);
@@ -710,9 +739,10 @@ export function launchSpecial(m: Match, p: Player, k: PendingKick) {
       break;
     }
     case 'meteor': {
-      const cx = sx + (gx - sx) * 0.75;
-      const cy = sy + (ey - sy) * 0.75;
-      const cz = 36;
+      // 하늘 높이 솟았다가 골문 입구로 가파르게 내리꽂힌다 (최고점 약 10m)
+      const cx = sx + (gx - sx) * 0.45;
+      const cy = sy + (ey - sy) * 0.45;
+      const cz = 20;
       path = (t) => {
         const a = (1 - t) * (1 - t);
         const bb = 2 * (1 - t) * t;
@@ -726,7 +756,7 @@ export function launchSpecial(m: Match, p: Player, k: PendingKick) {
     case 'dragon': {
       path = (t) => {
         const base = lerp3(t, sx, sy, sz, inside, ey, ez);
-        const amp = 3.2 * Math.sin(Math.PI * t);
+        const amp = 3.2 * wig * Math.sin(Math.PI * t);
         const w = Math.sin(t * Math.PI * 3);
         return [base[0] + perp.x * amp * w, base[1] + perp.y * amp * w, base[2] + 2.6 * Math.sin(Math.PI * t) + 0.8 * Math.cos(t * Math.PI * 3) * Math.sin(Math.PI * t)];
       };
@@ -758,6 +788,11 @@ export function launchSpecial(m: Match, p: Player, k: PendingKick) {
       T = D / (type === 'tiger' ? 44 : type === 'ice' ? 39 : 43);
     }
   }
+  // 꼬리: (inside, ey, ez) → 골라인 → 골망 안쪽 1.2m (전체 시간의 8%)
+  const main = path;
+  const netX = gx + team.dir * 1.2;
+  const tail = 0.08;
+  path = (t) => (t < 1 - tail ? main(t / (1 - tail)) : lerp3((t - (1 - tail)) / tail, inside, ey, ez, netX, ey, ez));
   b.owner = null;
   b.heldByKeeper = false;
   b.lastTouch = p;
@@ -768,8 +803,12 @@ export function launchSpecial(m: Match, p: Player, k: PendingKick) {
   b.specialColor = SPECIAL_COLORS[type][0];
   b.spin = 0;
   p.touchCD = 0.6;
-  // 골키퍼가 막을 확률 계수 (매우 낮음)
-  const saveMul = (ace ? 0.3 : 0.45) * (type === 'phantom' ? 0.75 : 1);
+  // 골키퍼가 막을 확률 계수 (일반 슛보다 훨씬 낮다)
+  // 궤적이 항상 골문 안으로 향하므로 막을 여지를 남긴다 (성공률 약 55~65%)
+  // 느리거나 크게 휘는 속성은 키퍼가 반응할 시간이 많으므로 막기 어렵게 보정
+  const typeMul: Record<SpecialType, number> = { fire: 1.15, ice: 1.1, tiger: 1.15, thunder: 1, tornado: 0.75, dragon: 0.9, phantom: 0.85, meteor: 0.6 };
+  const saveMul = (ace ? 0.85 : 1.05) * typeMul[type] * m.specialBoost;
+  m.specialBoost = 1;
   b.shot = {
     by: p,
     side: team.side,

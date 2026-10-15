@@ -24,6 +24,7 @@ export class Shootout {
   keeper!: Player;
   result: 'goal' | 'save' | 'miss' | '' = '';
   winner: 0 | 1 | null = null;
+  private endFired = false;
   private shotTarget = { y: CY, z: 1 };
   private willSave = false;
   private flightT = 0;
@@ -180,6 +181,10 @@ export class Shootout {
         break;
       }
       case 'done':
+        if (this.t > 2.6 && !this.endFired) {
+          this.endFired = true;
+          this.m.cb.onShootoutEnd?.();
+        }
         break;
     }
     // 키퍼 다이빙 애니메이션
@@ -210,7 +215,7 @@ export class Shootout {
     if (s.def.personality === 'nervous') err += 0.25;
     if (s.def.personality === 'calm' || s.def.personality === 'confident') err -= 0.06;
     err -= s.morale * 0.05;
-    if (this.kicks[0].length >= 5) err += 0.1; // 서든데스 압박
+    if (Math.min(this.kicks[0].length, this.kicks[1].length) >= 5) err += 0.1; // 서든데스 압박
     const over = this.power > 0.82 ? (this.power - 0.82) * 6 : 0;
     const ty = this.aimY + gauss() * err;
     const tz = Math.max(0.1, this.aimZ + gauss() * err * 0.6 + over * rand(0.5, 1.2));
@@ -228,7 +233,7 @@ export class Shootout {
       diveY = CY + this.keeperDir.y * 2.6;
       diveZ = 0.6 + Math.max(0, this.keeperDir.z) * 1.3;
     } else {
-      const read = 0.3 + m.cfg.difficulty * 0.06 + (gk.def.gk - 75) / 120;
+      const read = 0.22 + m.cfg.difficulty * 0.04 + (gk.def.gk - 75) / 150;
       if (chance(read)) {
         diveY = ty + rand(-0.5, 0.5);
         diveZ = tz;
@@ -258,7 +263,15 @@ export class Shootout {
     const reach = 1.4 + gk.def.gk / 250;
     let saveP = dist < reach ? clamp(0.85 - dist * 0.35 - (speed - 24) * 0.02, 0.1, 0.9) : 0.02;
     if (Math.abs(lateral) < 0.5 && Math.abs(ty - CY) < 1.1 && tz < 1.9) saveP = 0.8;
+    // 구석·높은 코스일수록 막기 어렵다 (코스를 잘 노린 킥이 보상받도록)
+    saveP *= clamp((GOAL_HALF_W - 0.3 - Math.abs(ty - CY)) / 1.5, 0.15, 1);
+    if (tz > 1.7) saveP *= 0.7;
     this.willSave = onTarget && chance(saveP);
+    // 결과에 맞는 도착 지점: 선방은 키퍼 손, 골대는 골대, 골은 골망 안
+    const post = !onTarget && Math.abs(ty - CY) < GOAL_HALF_W + 0.25 && tz < GOAL_H + 0.25;
+    if (this.willSave) this.endPos = { x: gk.x + 0.25, y: CY + lateral * 0.9 + (ty - (CY + lateral)) * 0.4, z: clamp(diveZ, 0.3, 2.2) * 0.6 + tz * 0.4 };
+    else if (post) this.endPos = { x: 0.05, y: CY + Math.sign(ty - CY) * (GOAL_HALF_W + 0.05), z: Math.min(tz, GOAL_H) };
+    this.flightDur *= Math.abs(this.endPos.x - PEN_SPOT) / Math.abs(-0.6 - PEN_SPOT);
     this.stage = 'flight';
     this.t = 0;
     m.ball.special = null;
@@ -275,7 +288,6 @@ export class Shootout {
       b.vx = rand(4, 8);
       b.vy = (ty > CY ? 1 : -1) * rand(3, 7);
       b.vz = rand(2, 5);
-      b.x = 0.4;
       audio.ooh();
       audio.tackle();
       m.particles.burst(b.x, b.y, b.z, 20, ['#ffffff', '#cfe3ff'], 6, 'spark', 0.5, 0.12);
@@ -339,7 +351,7 @@ export class Shootout {
       audio.roar(1.2);
       audio.whistle(3, true);
       this.m.particles.confetti(0, CY, 200, [t.kit.shirt, t.kit.accent, '#ffffff', '#ffd34d']);
-      setTimeout(() => this.m.cb.onShootoutEnd?.(), 2600);
+      this.t = 0;
       return;
     }
     this.turn = (1 - this.turn) as 0 | 1;

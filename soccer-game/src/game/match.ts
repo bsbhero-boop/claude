@@ -20,9 +20,9 @@ import {
 } from './constants';
 import { humanControl, switchTo } from './control';
 import { Ball, PendingKick, Player, TeamState } from './entities';
-import { inOwnBox, nearestOpp } from './geo';
+import { distToGoal, goalAngle, inOwnBox, nearestOpp } from './geo';
 import { Input } from './input';
-import { chance, clamp, len, norm, pick, rand, smooth } from './math';
+import { chance, clamp, len, norm, pick, rand, smooth, turnToward } from './math';
 import { Particles } from './particles';
 import { Shootout } from './shootout';
 import { FORMATIONS, Slot } from '../data/formations';
@@ -44,16 +44,28 @@ export interface DiffParams {
   perfect: number;
   gkBonus: number;
   cpuGauge: number;
+  /** 사람 보정: 태클 성공률·태클 범위 가산 */
+  humanAssist: number;
+  /** 사람이 공을 받은 직후 CPU가 태클하지 않는 시간 (첫 터치 여유) */
+  touchGrace: number;
 }
 
 export const DIFFS: DiffParams[] = [
-  { cpuErr: 1.7, cpuTackle: -0.14, reaction: 0.5, decision: 0.45, noise: 3, tackleRate: 0.6, slideRate: 0.04, shotBias: 0.8, specialUse: 0.25, skillUse: 0.3, perfect: 0.05, gkBonus: -0.08, cpuGauge: 0.65 },
-  { cpuErr: 1.2, cpuTackle: -0.05, reaction: 0.32, decision: 0.34, noise: 2, tackleRate: 1.0, slideRate: 0.09, shotBias: 0.95, specialUse: 0.4, skillUse: 0.6, perfect: 0.15, gkBonus: -0.02, cpuGauge: 0.85 },
-  { cpuErr: 0.92, cpuTackle: 0.02, reaction: 0.2, decision: 0.25, noise: 1.2, tackleRate: 1.5, slideRate: 0.15, shotBias: 1.05, specialUse: 0.55, skillUse: 0.9, perfect: 0.3, gkBonus: 0.03, cpuGauge: 1.05 },
-  { cpuErr: 0.72, cpuTackle: 0.07, reaction: 0.14, decision: 0.19, noise: 0.7, tackleRate: 2.0, slideRate: 0.2, shotBias: 1.12, specialUse: 0.7, skillUse: 1.1, perfect: 0.45, gkBonus: 0.07, cpuGauge: 1.2 },
+  { cpuErr: 1.7, cpuTackle: -0.14, reaction: 0.5, decision: 0.45, noise: 3, tackleRate: 0.6, slideRate: 0.04, shotBias: 0.8, specialUse: 0.25, skillUse: 0.3, perfect: 0.05, gkBonus: -0.08, cpuGauge: 0.65, humanAssist: 0.16, touchGrace: 0.6 },
+  { cpuErr: 1.2, cpuTackle: -0.05, reaction: 0.32, decision: 0.34, noise: 2, tackleRate: 1.0, slideRate: 0.09, shotBias: 0.95, specialUse: 0.4, skillUse: 0.6, perfect: 0.15, gkBonus: -0.02, cpuGauge: 0.85, humanAssist: 0.1, touchGrace: 0.45 },
+  { cpuErr: 0.92, cpuTackle: 0.02, reaction: 0.2, decision: 0.25, noise: 1.2, tackleRate: 1.5, slideRate: 0.15, shotBias: 1.05, specialUse: 0.55, skillUse: 0.9, perfect: 0.3, gkBonus: 0.03, cpuGauge: 1.05, humanAssist: 0.04, touchGrace: 0.25 },
+  { cpuErr: 0.72, cpuTackle: 0.07, reaction: 0.14, decision: 0.19, noise: 0.7, tackleRate: 2.0, slideRate: 0.2, shotBias: 1.12, specialUse: 0.7, skillUse: 1.1, perfect: 0.45, gkBonus: 0.07, cpuGauge: 1.2, humanAssist: 0, touchGrace: 0.1 },
 ];
 
 export type Phase = 'intro' | 'kickoff' | 'play' | 'out' | 'setpiece' | 'goal' | 'replay' | 'cutin' | 'halftime' | 'fulltime' | 'shootout';
+
+export type DuelResult = 'none' | 'perfect' | 'good' | 'early' | 'late';
+
+/** 컷인 타이밍 바의 진행도 (0~1에서 0.82~1.0이 PERFECT) */
+export function cutinDuelK(t: number, dur = 1.9) {
+  const s = dur / 1.9;
+  return (t - 0.35 * s) / (1.4 * s);
+}
 
 export type SetPieceKind = 'kickoff' | 'throw' | 'corner' | 'goalkick' | 'freekick' | 'penalty';
 
@@ -67,6 +79,8 @@ export interface SetPiece {
   spots: Map<Player, { x: number; y: number }>;
   /** CPU가 킥하기까지 남은 시간 */
   cpuDelay: number;
+  /** 사람이 아무 조작도 하지 않은 시간 (오래되면 대신 처리) */
+  idleT?: number;
 }
 
 export interface Popup {
@@ -150,8 +164,25 @@ export class Match {
     letterbox: 0,
     zoom: 1,
     darken: 0,
+    /** 타격 순간 아주 짧게 멈춤 (초) */
+    hitstop: 0,
+    /** 필살 발사 순간 화각을 살짝 당기는 연출 (초) */
+    punch: 0,
   };
-  cutin: { p: Player; t: number; dur: number; type: SpecialType } | null = null;
+  /** 진동 사용 (설정) */
+  haptics = false;
+  /** 타이틀 배경 데모 경기 (HUD를 그리지 않는다) */
+  isDemo = false;
+  /** 팀별 이번 경기 필살 컷인 횟수: 두 번째부터는 짧게 */
+  cutinsUsed: [number, number] = [0, 0];
+  /** 공을 가진 팀의 공격 방향으로 카메라를 앞서 보내는 양 */
+  private camLead = 0;
+  private cineKind: '' | 'cutin' | 'flight' | 'replay' = '';
+  cutin: { p: Player; t: number; dur: number; type: SpecialType; duel: DuelResult } | null = null;
+  /** 사람이 쏜 필살기의 컷인 타이밍 결과 → 키퍼 선방 확률 배수 */
+  specialBoost = 1;
+  /** CPU 필살기를 막는 반응 타이밍 (사람 팀이 수비할 때) */
+  saveDuel: { res: DuelResult; rem: number; r0: number } | null = null;
   banner: { text: string; sub: string; color: string; t: number; dur: number } | null = null;
   popups: Popup[] = [];
   commentary: { text: string; t: number } = { text: '', t: 0 };
@@ -162,11 +193,14 @@ export class Match {
   lastKickT = 0;
   specialData: { pts?: number[][]; fakes?: number[][]; start?: number[] } = {};
   cam = { x: CX, y: CY, zoom: 1, tx: CX, ty: CY, mode: 'broadcast' as 'broadcast' | 'penalty' | 'cinematic' };
+  /** 시네마틱 카메라 (필살 슛 추적, 리플레이 골대 뒤 시점). w = 중계 카메라와의 혼합 비율 */
+  cine = { w: 0, px: CX, py: CY, pz: 3, tx: CX, ty: CY, tz: 1, init: false };
   /** 사람이 차지 중인 게이지 (HUD 표시) */
   charge: { kind: string; t: number } | null = null;
   realTime = 0;
   shootout: Shootout | null = null;
   paused = false;
+  private whistleCb: { t: number; fn: () => void } | null = null;
   private frames: FrameRec[] = [];
   private replayFrames: FrameRec[] = [];
   replayIdx = 0;
@@ -176,7 +210,19 @@ export class Match {
   private outText = '';
   autoSwitchT = 0;
   lastSwitchT = 0;
+  /** 마지막으로 공 소유가 바뀐 경기 시간 */
+  ownerSince = 0;
+  /** 사람 조종 선수의 지난 스텝 상태 (수비 → 받는 공 전환 때만 눌린 버튼을 무효로) */
+  ctlMode: 'attack' | 'incoming' | 'defense' = 'defense';
   replayEnabled = true;
+  /** 일시정지를 푼 시각 (게임패드 Start가 아직 눌려 있어 곧바로 다시 멈추지 않게) */
+  resumedAt = -1;
+  /** 터치 화면으로 플레이 중 (안내 문구용) */
+  touchUI = false;
+  /** 직전 틱의 공 x (키퍼 평면 통과 판정용) */
+  prevBallX = CX;
+  /** 마지막 슈팅 (키퍼가 건드린 골을 슈터에게 인정하기 위해) */
+  lastShot: { by: Player; t: number } | null = null;
   /** 경기 후 축포를 터뜨릴 팀 (-1 없음) */
   celebrateTeam: -1 | 0 | 1 = -1;
 
@@ -258,10 +304,27 @@ export class Match {
 
   private acc = 0;
 
+  /** 휴대폰 진동 (지원하는 기기에서만) */
+  buzz(ms: number) {
+    if (!this.haptics) return;
+    try {
+      navigator.vibrate?.(ms);
+    } catch {
+      /* 무시 */
+    }
+  }
+
   frame(realDt: number) {
     realDt = Math.min(realDt, 0.1);
     this.realTime += realDt;
     if (this.paused) return;
+    if (this.fx.hitstop > 0) {
+      // 히트스톱: 시뮬레이션만 멈추고 연출 시계는 계속
+      this.fx.hitstop -= realDt;
+      this.updateFx(realDt);
+      audio.update(realDt);
+      return;
+    }
     let scale = 1;
     if (this.fx.slow > 0) {
       this.fx.slow -= realDt;
@@ -270,7 +333,7 @@ export class Match {
     if (this.phase === 'replay') scale = 0.6;
     this.acc += realDt * scale;
     let steps = 0;
-    while (this.acc >= SIM_DT && steps < 8) {
+    while (this.acc >= SIM_DT && steps < 8 && !this.paused) {
       this.acc -= SIM_DT;
       this.step(SIM_DT);
       steps++;
@@ -283,8 +346,9 @@ export class Match {
   step(dt: number) {
     this.input.poll(dt);
     this.phaseT += dt;
-    if (this.input.pressed('pause') && this.phase !== 'halftime' && this.phase !== 'fulltime') {
+    if (this.input.pressed('pause') && this.phase !== 'halftime' && this.phase !== 'fulltime' && this.realTime - this.resumedAt > 0.4) {
       this.cb.onPause?.();
+      if (this.paused) return;
     }
     switch (this.phase) {
       case 'intro':
@@ -351,11 +415,21 @@ export class Match {
     this.record();
     this.checkClock(dt);
     // 게이지 자연 증가
-    for (const t of this.teams) this.addGauge(t, dt * 0.32, true);
+    // 필살 게이지는 경기당 팀별 1~2회 정도 차도록
+    for (const t of this.teams) this.addGauge(t, dt * 0.12, true);
   }
 
   /** 휘슬 이후: 선수들은 천천히 멈추고, 우승/승리 시 축포 */
   private updateAfterWhistle(dt: number) {
+    // 종료 화면 콜백은 실시간 타이머가 아니라 경기 시간으로 (일시정지·나가기와 엇갈리지 않게)
+    const wc = this.whistleCb;
+    if (wc) {
+      wc.t -= dt;
+      if (wc.t <= 0) {
+        this.whistleCb = null;
+        wc.fn();
+      }
+    }
     for (const t of this.teams)
       for (const p of t.active) {
         p.dvx = p.dvy = 0;
@@ -450,7 +524,10 @@ export class Match {
   cameraUpdate(dt: number) {
     const b = this.ball;
     const c = this.cam;
-    let tx = b.x + b.vx * 0.35;
+    // 공을 가진 팀의 공격 방향으로 카메라를 앞서 보내 앞쪽 동료가 보이게
+    const leadT = this.phase === 'play' && b.owner && !b.heldByKeeper ? b.owner.team.dir * 9 : 0;
+    this.camLead = smooth(this.camLead, leadT, 1.6, dt);
+    let tx = b.x + b.vx * 0.35 + this.camLead;
     let ty = b.y + b.vy * 0.2;
     let zoom = 1;
     if (this.phase === 'goal' && this.phaseT > 0.6) {
@@ -482,6 +559,103 @@ export class Match {
     c.x = smooth(c.x, c.tx, this.phase === 'replay' ? 5 : 3.2, dt);
     c.y = smooth(c.y, c.ty, 2.2, dt);
     c.zoom = smooth(c.zoom, zoom * this.fx.zoom, 3, dt);
+    this.cineUpdate(dt);
+  }
+
+  /** 필살 슛이 날아가는 동안은 공 뒤를 낮게 따라가고, 리플레이는 골대 뒤에서 본다 */
+  private cineUpdate(dt: number) {
+    const b = this.ball;
+    const k = this.cine;
+    let want = 0;
+    let px = k.px;
+    let py = k.py;
+    let pz = k.pz;
+    let tx = k.tx;
+    let ty = k.ty;
+    let tz = k.tz;
+    const shooter = this.cutin?.p ?? (b.special && b.shot ? b.shot.by : null);
+    let kind: '' | 'cutin' | 'flight' | 'replay' = '';
+    // 컷인이 끝나고 필살 킥이 나가기 직전 몇 프레임: 컷인 시점을 유지 (카메라가 튀지 않게)
+    const winding = this.phase === 'play' && !b.guide && this.cineKind === 'cutin' && this.teams.some((t) => t.active.some((p) => p.kick?.kind === 'special'));
+    if (winding) {
+      want = 1;
+      kind = 'cutin';
+    } else if (this.phase === 'cutin' && this.cutin) {
+      kind = 'cutin';
+      // 컷인: 키커 옆 낮은 곳에서 올려다본다
+      const p = this.cutin.p;
+      const gx = p.team.oppGoalX;
+      const d = norm(gx - p.x, CY - p.y);
+      want = 1;
+      px = p.x - d.x * 4 - d.y * 4.5;
+      py = p.y - d.y * 4 + d.x * 4.5;
+      pz = 1.4;
+      tx = p.x + d.x * 2;
+      ty = p.y + d.y * 2;
+      tz = 1.3;
+    } else if (this.phase === 'play' && b.special && b.guide && shooter) {
+      kind = 'flight';
+      const gx = shooter.team.oppGoalX;
+      const d = norm(gx - b.x, CY - b.y);
+      want = 1;
+      px = b.x - d.x * 7.5 - d.y * 2.2;
+      py = b.y - d.y * 7.5 + d.x * 2.2;
+      pz = Math.max(2.2, b.z + 1.6);
+      tx = b.x + d.x * 6;
+      ty = b.y + d.y * 6;
+      tz = Math.max(0.8, b.z * 0.7);
+    } else if (this.phase === 'replay' && this.goals.length) {
+      const last = this.goals[this.goals.length - 1];
+      const gx = this.teams[last.side].oppGoalX;
+      const out = gx === 0 ? -1 : 1;
+      kind = 'replay';
+      want = 1;
+      // 공이 골문에서 멀 때는 공 뒤에서 따라가고, 골문 가까이 오면 골대 뒤 시점으로
+      const dg = len(gx - b.x, CY - b.y);
+      const near = clamp((34 - dg) / 12, 0, 1);
+      const d = norm(gx - b.x, CY - b.y);
+      const fx2 = b.x - d.x * 18 - d.y * 3;
+      const fy2 = b.y - d.y * 18 + d.x * 3;
+      px = fx2 + (gx + out * 9 - fx2) * near;
+      py = fy2 + (CY + 6 - fy2) * near;
+      pz = 7 + (4.6 - 7) * near;
+      tx = b.x;
+      ty = b.y;
+      tz = Math.max(0.5, b.z);
+    }
+    // 끝날 때는 스윙하지 않고 컷으로 (골·세이브 순간 흰 번쩍임 뒤로)
+    if (want === 0 && k.w > 0.3 && this.cineKind !== '' && this.cineKind !== 'cutin') {
+      k.w = 0;
+      k.init = false;
+      this.fx.flash = Math.max(this.fx.flash, 0.25);
+      this.cineKind = '';
+      return;
+    }
+    if (want === 0 && this.cineKind === 'cutin' && this.phase !== 'play' && this.phase !== 'cutin') {
+      k.w = 0;
+      k.init = false;
+    }
+    if (kind) this.cineKind = kind;
+    else if (k.w < 0.05) this.cineKind = '';
+    if (want > 0 && (!k.init || k.w < 0.02)) {
+      // 처음 진입할 때는 목표 지점에서 바로 시작
+      k.px = px;
+      k.py = py;
+      k.pz = pz;
+      k.tx = tx;
+      k.ty = ty;
+      k.tz = tz;
+      k.init = true;
+    }
+    const r = this.phase === 'replay' ? 6 : 10;
+    k.px = smooth(k.px, px, r, dt);
+    k.py = smooth(k.py, py, r, dt);
+    k.pz = smooth(k.pz, pz, r, dt);
+    k.tx = smooth(k.tx, tx, r * 1.5, dt);
+    k.ty = smooth(k.ty, ty, r * 1.5, dt);
+    k.tz = smooth(k.tz, tz, r * 1.5, dt);
+    k.w = smooth(k.w, want, want > k.w ? 7 : 3.5, dt);
+    if (k.w < 0.01 && want === 0) k.init = false;
   }
 
   // ───────────────────────────── 선수 업데이트 ─────────────────────────────
@@ -510,11 +684,19 @@ export class Match {
             }
             if (p.stateT >= p.stateDur) p.setState('idle');
             break;
-          case 'tackle':
+          case 'tackle': {
+            // 태클 초반에는 공 쪽으로 방향을 조금씩 튼다 (옆에서 들어가도 걸리게)
+            if (p.stateT < 0.16) {
+              const tb = Math.atan2(b.y + b.vy * 0.1 - p.y, b.x + b.vx * 0.1 - p.x);
+              p.facing = turnToward(p.facing, tb, 8 * dt);
+              p.vx = Math.cos(p.facing) * 6.5;
+              p.vy = Math.sin(p.facing) * 6.5;
+            }
             p.dvx = p.vx;
             p.dvy = p.vy;
             if (p.stateT >= p.stateDur) p.setState('idle');
             break;
+          }
           case 'slide': {
             const k = Math.exp(-2.6 * dt);
             p.vx *= k;
@@ -656,8 +838,10 @@ export class Match {
 
   updateBall(dt: number) {
     const b = this.ball;
+    this.prevBallX = b.x;
     if (b.owner) {
       const p = b.owner;
+      b.lastLine = null;
       if (b.heldByKeeper || p.state === 'throw' || (this.setPiece && this.setPiece.kind === 'throw' && this.setPiece.taker === p && this.phase !== 'play')) {
         const f = { x: Math.cos(p.facing), y: Math.sin(p.facing) };
         b.x = p.x + f.x * 0.25;
@@ -788,9 +972,17 @@ export class Match {
     if (b.shot && fast && !p.isGK) {
       if (p.team !== b.shot.by.team) {
         const n = norm(b.vx, b.vy);
-        b.vx = -n.x * rand(3, 8) + rand(-4, 4);
-        b.vy = -n.y * rand(3, 8) + rand(-4, 4);
-        b.vz = rand(0.5, 4);
+        if (chance(0.5)) {
+          // 몸에 맞고 옆으로 꺾여 골라인 밖으로 → 코너킥이 되기 쉽다
+          const side = b.y > CY ? 1 : -1;
+          b.vx = n.x * rand(4, 9);
+          b.vy = side * rand(6, 11) + n.y * 3;
+          b.vz = rand(1, 5);
+        } else {
+          b.vx = -n.x * rand(3, 8) + rand(-4, 4);
+          b.vy = -n.y * rand(3, 8) + rand(-4, 4);
+          b.vz = rand(0.5, 4);
+        }
         b.spin = 0;
         b.lastTouch = p;
         b.shot = null;
@@ -807,12 +999,19 @@ export class Match {
     if (b.z > 1.25 && !p.isGK) {
       const q = p.queued;
       const human = p.human;
-      const attacking = p.team.u(p.x) > 0.7;
+      // 공격 헤더는 실제 슈팅 거리·각도에서만 (먼 곳에서는 공을 받아 놓는다)
+      const attacking = distToGoal(p.team, p.x, p.y) < 16 && goalAngle(p.x, p.y, p.team.oppGoalX) > 0.3;
       if ((human && q && (q.kind === 'shot' || q.kind === 'header')) || (!human && attacking && b.pass && b.pass.lofted && chance(0.75))) {
         p.queued = null;
         this.ball.owner = null;
         const t = p.team;
-        beginKick(this, p, 'header', 0.7, t.dir, (Math.random() - 0.5) * 1.6);
+        // 사람은 방향키로 헤더 방향을 정한다
+        const hy = human ? this.input.axis().y : (Math.random() - 0.5) * 1.6;
+        beginKick(this, p, 'header', 0.7, t.dir, hy);
+        if (p.kick) {
+          p.kick.dirX = t.dir;
+          p.kick.dirY = hy;
+        }
         p.kick!.windup = 0;
         executeKick(this, p);
         p.setState('header', 0.5);
@@ -821,10 +1020,16 @@ export class Match {
         return;
       }
       if (!human && p.team.u(p.x) < 0.35 && b.pass && b.pass.from.team !== p.team) {
-        // 수비 헤더 클리어
-        b.vx = p.team.dir * rand(8, 13) + rand(-3, 3);
-        b.vy = rand(-6, 6);
-        b.vz = rand(4, 7);
+        // 수비 헤더 클리어 (골문 가까이에서는 가끔 옆줄·골라인 밖으로 걷어낸다)
+        if (p.team.u(p.x) < 0.14 && chance(0.3)) {
+          b.vx = -p.team.dir * rand(2, 6);
+          b.vy = (p.y > CY ? 1 : -1) * rand(5, 10);
+          b.vz = rand(3, 6);
+        } else {
+          b.vx = p.team.dir * rand(8, 13) + rand(-3, 3);
+          b.vy = rand(-6, 6);
+          b.vz = rand(4, 7);
+        }
         b.lastTouch = p;
         b.pass = null;
         p.touchCD = 0.4;
@@ -857,12 +1062,12 @@ export class Match {
       if (pass.from.team === team && pass.from !== p) {
         team.stats.passesDone++;
         pass.from.st.passOk++;
-        this.addGauge(team, 2.2);
+        this.addGauge(team, 1.0);
         this.lastPasser[team.side] = pass.from;
         this.lastPassT[team.side] = this.clock;
         if (pass.through) {
           pass.from.st.keyPass++;
-          this.addGauge(team, 3);
+          this.addGauge(team, 2);
         }
       } else if (pass.from.team !== team) {
         pass.from.st.passBad++;
@@ -878,7 +1083,9 @@ export class Match {
       audio.ooh();
     }
     const lastTeam = b.lastTouch?.team;
+    if (team.human && lastTeam !== team) this.input.consumeHeld();
     b.owner = p;
+    if (lastTeam !== team || b.lastTouch !== p) this.ownerSince = this.clock;
     b.lastTouch = p;
     b.pass = null;
     b.shot = null;
@@ -893,7 +1100,8 @@ export class Match {
     }
     p.holdT = 0;
     p.aiT = 0;
-    if (team.human && !p.human && this.phase === 'play') switchTo(this, team, p);
+    // 골키퍼가 공을 잡으면 AI가 배급한다 (사람은 필드 선수만 조종)
+    if (team.human && !p.human && !p.isGK && this.phase === 'play') switchTo(this, team, p);
     if (lastTeam && lastTeam !== team) {
       // 공을 잃은 팀이 사람팀이면 가까운 수비수로 전환
       const lost = this.teams[1 - team.side];
@@ -914,23 +1122,38 @@ export class Match {
       const ax = this.input.axis();
       const dx = ax.mag > 0.2 ? ax.x : Math.cos(p.facing);
       const dy = ax.mag > 0.2 ? ax.y : Math.sin(p.facing);
-      beginKick(this, p, q.kind, q.power, dx, dy, {
-        finesse: this.input.held('finesse'),
-        chip: this.input.held('chip'),
+      let kind = q.kind;
+      if (kind === 'lob' && team.u(p.x) > 0.68 && Math.abs(p.y - CY) > 11) kind = 'cross';
+      beginKick(this, p, kind, kind === 'shot' ? Math.max(0.12, q.power) : q.power, dx, dy, {
+        finesse: !!q.finesse || this.input.held('finesse'),
+        chip: !!q.chip || this.input.held('chip'),
       });
-      if (p.kick) p.kick.windup = Math.min(p.kick.windup, 0.08);
+      const pk = p.kick as PendingKick | null;
+      if (pk) {
+        pk.windup = Math.min(pk.windup, 0.08);
+        if (kind === 'shot') {
+          pk.dirX = team.dir;
+          pk.dirY = ax.mag > 0.2 ? ax.y : 0;
+        }
+      }
       this.popup(p, '원터치!', '#7fe0ff');
     }
   }
 
+  /** 패스를 받는 선수로 조종이 넘어간 순간의 방향키 (받는 선수가 그 방향으로 도망가지 않게) */
+  recvLock: { p: Player; ax: number; ay: number; t: number } | null = null;
+
   onPassLaunched(from: Player, to: Player) {
     const team = from.team;
     if (team.human && to !== team.controlled) {
-      switchTo(this, team, to);
+      const ax = this.input.axis();
+      switchTo(this, team, to, true);
+      this.recvLock = ax.mag > 0.2 ? { p: to, ax: ax.x / ax.mag, ay: ax.y / ax.mag, t: this.clock } : null;
     }
   }
 
   onShot(p: Player, k: PendingKick, dist: number) {
+    this.lastShot = { by: p, t: this.clock };
     if (k.timing === 'perfect') {
       this.popup(p, 'PERFECT!', '#3dff8f');
       audio.perfect();
@@ -952,8 +1175,15 @@ export class Match {
       if (team.human) this.popup(p, '골문에서 너무 멀다!', '#ff9a9a');
       return false;
     }
+    if (goalAngle(p.x, p.y, team.oppGoalX) < 0.17) {
+      if (team.human) this.popup(p, '각도가 없다!', '#ff9a9a');
+      return false;
+    }
     team.gauge = 0;
-    this.cutin = { p, t: 0, dur: 1.9, type: team.def.special.type };
+    // 같은 팀의 두 번째 필살기부터는 컷인을 짧게 (경기 흐름이 끊기지 않게)
+    const dur = this.cutinsUsed[team.side] > 0 ? 1.35 : 1.9;
+    this.cutinsUsed[team.side]++;
+    this.cutin = { p, t: 0, dur, type: team.def.special.type, duel: 'none' };
     this.phase = 'cutin';
     this.phaseT = 0;
     p.aura = 4;
@@ -962,7 +1192,7 @@ export class Match {
     p.vy *= 0.2;
     p.facing = Math.atan2(CY - p.y, team.oppGoalX - p.x);
     audio.charge();
-    if (team.def.special.type === 'tiger') setTimeout(() => audio.roarTiger(), 600);
+    if (team.def.special.type === 'tiger') setTimeout(() => !this.isDemo && audio.roarTiger(), 600);
     this.say(`${p.def.name}! 필살기 「${team.def.special.name}」!!`);
     return true;
   }
@@ -971,6 +1201,13 @@ export class Match {
     const c = this.cutin!;
     c.t += dt;
     const p = c.p;
+    // 필살 타이밍: 컷인 중 막대가 끝 구간에 들어왔을 때 슛(또는 필살) 버튼
+    if (p.team.human && c.duel === 'none' && c.t > 0.3 && (this.input.pressed('shoot') || this.input.pressed('special'))) {
+      const k = cutinDuelK(c.t, c.dur);
+      // 초록 구간을 지나서 누르면 '늦었다' (막대도 끝에서 빨갛게 표시)
+      c.duel = k > 1.0 ? 'late' : k >= 0.82 ? 'perfect' : k >= 0.64 ? 'good' : 'early';
+      if (c.duel === 'perfect') audio.perfect();
+    }
     // 오라 파티클
     const [c1, c2] = SPECIAL_COLORS[c.type];
     for (let i = 0; i < 6; i++) {
@@ -985,15 +1222,26 @@ export class Match {
       this.phase = 'play';
       this.phaseT = 0;
       const team = p.team;
+      this.specialBoost = team.human ? { perfect: 0.55, good: 0.8, early: 1.15, late: 1.15, none: 1.0 }[c.duel] : 1;
       const ax = this.input.axis();
       const dirY = team.human ? ax.y : rand(-1, 1);
       beginKick(this, p, 'special', 1, team.dir, dirY);
       p.state = 'kick';
-      p.kick!.windup = 0.12;
+      p.kick!.windup = 0.06;
+      // 컷인이 끝난 직후 태클에 걸려 필살기가 날아가지 않게
+      p.evade = 0.8;
+      for (const o of this.opp(team).active) {
+        if (len(o.x - p.x, o.y - p.y) < 4 && (o.state === 'tackle' || o.state === 'slide' || o.state === 'charge')) o.tackleResolved = true;
+      }
     }
   }
 
   onSpecialLaunched(p: Player, type: SpecialType) {
+    this.lastShot = { by: p, t: this.clock };
+    this.saveDuel = this.opp(p.team).human ? { res: 'none', rem: 9, r0: 0 } : null;
+    this.fx.hitstop = 0.08;
+    this.fx.punch = 0.15;
+    this.buzz(40);
     const [c1, c2, c3] = SPECIAL_COLORS[type];
     this.fx.slow = 0.55;
     this.fx.slowScale = 0.35;
@@ -1042,32 +1290,83 @@ export class Match {
     if (gk.sentOff) return;
     const gx = defTeam.ownGoalX;
     // 공이 골문 방향으로 오는가
-    const toward = (gx - b.x) * b.vx > 0;
+    const toward = b.guide ? (gx - b.x) * (b.guide.path(1)[0] - b.x) > 0 : (gx - b.x) * b.vx > 0;
+    // 사람 팀이 CPU 필살기를 막을 때: 공이 키퍼에 닿기 직전에 슛 버튼을 누르면 선방 확률이 오른다
+    const duel = this.saveDuel;
+    if (!s.judged && duel && s.special && b.guide && defTeam.human) {
+      const rem = this.guideArrival(gk);
+      duel.rem = rem;
+      if (duel.r0 <= 0) duel.r0 = Math.max(0.2, rem);
+      if (duel.res === 'none' && (this.input.pressed('shoot') || this.input.pressed('special'))) {
+        // 판정 구간은 그 필살 슛의 비행 시간에 비례 (빠른 필살이라도 발사 순간에 누르면 '이르다')
+        // 아주 빠른 필살도 PERFECT 구간이 너무 짧지 않게 최소 0.2초는 보장
+        const f = rem / duel.r0;
+        duel.res = f <= 0.45 || rem <= 0.2 ? 'perfect' : f <= 0.75 ? 'good' : 'early';
+        this.popup(gk, duel.res === 'perfect' ? '반응 PERFECT!' : duel.res === 'good' ? '반응 GOOD' : '너무 빨랐다!', duel.res === 'early' ? '#ff9a9a' : '#3dff8f');
+        if (duel.res === 'perfect') audio.perfect();
+      }
+      const ready = duel.res === 'none' || duel.res === 'early' || duel.res === 'late' ? rem <= 0.1 : true;
+      if (!ready) return;
+      s.judged = true;
+      if (!toward) return;
+      this.judgeShot(gk, s, duel.res === 'perfect' ? 0.45 : duel.res === 'good' ? 0.38 : 0.28);
+      return;
+    }
     if (!s.judged) {
       let react = 0.08 + (1 - gk.def.gk / 99) * 0.22 - (defTeam.human ? 0 : this.dp.gkBonus);
       if (gk.frozen > 0) react += 0.3;
       if (s.special) react += 0.12;
       if (s.t < react) return;
+      // 오래 날아오는 슛(먼 거리·느린 공)은 너무 일찍 몸을 날리지 않도록 가까이 올 때까지 기다린다
+      if (toward && !b.guide) {
+        const kp = predictGoalCross(this, gk.x);
+        if (kp && kp.t > 0.85) return;
+      }
       s.judged = true;
       if (!toward) return;
-      this.judgeShot(gk, s);
+      // 필살 슛은 빨라 반응 시점의 남은 시간만으로는 손이 닿는 범위가 지나치게 좁다 (측면 필살이 거의 다 들어가는 문제)
+      this.judgeShot(gk, s, s.special && b.guide ? 0.3 : 0);
       return;
     }
-    // 세이브 판정 실행
+    // 세이브 판정 실행: 막기로 판정된 바로 그 슛에만, 공이 골라인을 넘기 전에만
+    if (gk.saveShot !== s) return;
+    const behindLine = (b.x - gx) * defTeam.dir < -0.05;
+    if (behindLine) {
+      gk.saveShot = null;
+      return;
+    }
     if (gk.dive && gk.dive.willSave) {
       const hx = gk.x;
-      const crossing = Math.abs(b.x - hx) < 0.6 || (gx - b.x) * (gx - hx) < 0;
-      const near = len(b.y - gk.dive.ty, b.z - gk.dive.tz) < 1.8;
-      if (crossing && near) this.doSave(gk);
-    } else if (gk.state !== 'dive' && (gk as Player & { standSave?: boolean }).standSave) {
-      if (len(b.x - gk.x, b.y - gk.y) < 1.1 && b.z < 2.3) {
-        (gk as Player & { standSave?: boolean }).standSave = false;
+      const crossing = Math.abs(b.x - hx) < 0.6 || (this.prevBallX - hx) * (b.x - hx) <= 0;
+      const near = len(b.y - gk.dive.ty, b.z - gk.dive.tz) < 1.6;
+      if (crossing && near) {
+        b.y += (gk.dive.ty - b.y) * 0.6;
+        b.z += (gk.dive.tz - b.z) * 0.6;
         this.doSave(gk);
       }
+    } else if (gk.state !== 'dive') {
+      if (len(b.x - gk.x, b.y - gk.y) < 1.1 && b.z < 2.3) this.doSave(gk);
     }
   }
 
-  private judgeShot(gk: Player, s: NonNullable<Ball['shot']>) {
+  /** 유도 궤적(필살 슛)이 키퍼 평면에 닿기까지 남은 시간 */
+  private guideArrival(gk: Player) {
+    const g = this.ball.guide;
+    if (!g) return 0;
+    let prev = g.path(Math.min(1, g.t / g.T));
+    for (let t = 0.02; t < 3; t += 0.02) {
+      const k = Math.min(1, (g.t + t) / g.T);
+      const cur = g.path(k);
+      if ((prev[0] - gk.x) * (cur[0] - gk.x) <= 0) return t;
+      prev = cur;
+      if (k >= 1) break;
+    }
+    return Math.max(0, g.T - g.t);
+  }
+
+  /** assumeT: 판정을 늦춘 경우(필살 반응 대결)에도 키퍼가 미리 공을 따라가고 있었던 것으로 보고 손이 닿는 범위를 계산 */
+  private judgeShot(gk: Player, s: NonNullable<Ball['shot']>, assumeT = 0) {
+    gk.saveShot = null;
     const b = this.ball;
     const team = gk.team;
     const gx = team.ownGoalX;
@@ -1109,31 +1408,56 @@ export class Match {
     }
     const diveSpeed = 5 + (gk.def.gk / 99) * 3.2;
     const tAvail = Math.max(0, kp.t - 0.04);
-    const reach = diveSpeed * tAvail + 1.05;
+    // 다이빙은 최대 3.6m까지이므로 손이 닿는 범위도 그 이상은 안 된다
+    const reach = Math.min(diveSpeed * Math.max(tAvail, assumeT) + 1.05, 3.6 + 1.05);
     const margin = reach - ady;
     let p: number;
     if (margin < 0) p = 0.04;
     else p = clamp(0.46 + margin * 0.3 + (gk.def.gk - 78) / 55, 0.12, 0.95);
-    p *= clamp(1.36 - s.speed / 44, 0.62, 1.05);
+    // 공이 키퍼까지 오래 걸리면(먼 거리) 빠른 슛이어도 막기 쉽다
+    const flight = s.t + kp.t;
+    p *= flight > 0.95 && !s.special ? 1.05 : clamp(1.36 - s.speed / 44, 0.62, 1.05);
+    if (flight > 1.15 && !s.special) p = Math.max(p, 0.82);
     if (kp.z > 1.95 && ady > 1.8) p *= 0.75;
     if (kp.z > GOAL_H - 0.1) p *= 0.85;
     p *= s.saveMul;
     p *= gk.moraleMul;
+    if (s.special && team.human && this.saveDuel) p = clamp(p + { perfect: 0.2, good: 0.1, early: -0.12, late: -0.12, none: 0 }[this.saveDuel.res], 0.02, 0.92);
     if (!team.human) p = clamp(p + this.dp.gkBonus, 0.01, 0.97);
     const willSave = chance(p);
     const catchBall = willSave && !s.special && s.speed < 25 && ady < 1.6 && kp.z < 1.9 && chance(0.35 + gk.def.gk / 250);
     if (ady < 0.75 && kp.z < 1.9 && !s.special) {
-      // 정면 슛: 서서 처리
-      if (willSave) (gk as Player & { standSave?: boolean }).standSave = true;
-      else gk.touchCD = kp.t + 0.4;
+      // 정면 슛: 서서 처리. 못 막을 때는 반대쪽으로 몸을 날려 공이 옆으로 빠지게
+      if (willSave) gk.saveShot = s;
+      else {
+        const away = -(Math.sign(dy) || 1);
+        this.startDive(gk, gk.y + away * rand(1.6, 2.2), rand(0.3, 0.8), Math.max(0.2, tAvail), false, false);
+        gk.touchCD = kp.t + 0.4;
+      }
       return;
     }
     if (willSave) {
+      gk.saveShot = s;
       this.startDive(gk, kp.y, kp.z, Math.max(0.16, tAvail), true, catchBall);
     } else {
-      // 막지 못함: 짧거나 늦게 다이빙
-      const ty = gk.y + dy * rand(0.45, 0.8);
-      this.startDive(gk, ty, kp.z * rand(0.5, 1), Math.max(0.2, tAvail * 1.15), false, false);
+      // 막지 못함: 공이 키퍼 몸을 통과해 보이지 않도록 확실히 빗나가는 다이빙
+      // (몸이 다이빙 방향으로 약 1.9m 눕기 때문에 손끝이 공에 못 미치게 멈추거나, 높이가 다르게)
+      const side = Math.sign(dy) || 1;
+      let ty: number;
+      let tz: number;
+      if (ady > 2.3) {
+        ty = gk.y + side * Math.max(0, ady - rand(2.2, 2.7));
+        tz = kp.z * rand(0.6, 1);
+      } else if (kp.z > 1.5) {
+        // 높은 공: 낮게 몸을 날려 공이 위로 지나간다
+        ty = gk.y + side * ady * 0.5;
+        tz = 0.3;
+      } else {
+        // 가까운 낮은 공: 반대로 몸이 쏠린다
+        ty = gk.y - side * rand(1.2, 1.8);
+        tz = rand(0.3, 0.9);
+      }
+      this.startDive(gk, ty, tz, Math.max(0.2, tAvail * 1.1), false, false);
       gk.touchCD = kp.t + 0.5;
     }
   }
@@ -1178,9 +1502,12 @@ export class Match {
     const out = team.dir;
     if (chance(0.5)) {
       // 골대 옆으로 쳐내기 → 코너킥이 되기 쉽다
-      b.vx = -out * rand(0.5, 2.5);
-      b.vy = (b.y > CY ? 1 : -1) * rand(7, 12);
-      b.vz = rand(1.5, 4);
+      b.vy = (b.y > CY ? 1 : -1) * rand(6, 11);
+      // 골라인에 닿을 때 이미 골대 바깥에 있도록 뒤로 가는 속도를 제한 (자기 골문으로 들어가지 않게)
+      const toLine = Math.abs(b.x - team.ownGoalX);
+      const need = Math.max(0.6, GOAL_HALF_W + 1.2 - Math.abs(b.y - CY));
+      b.vx = -out * Math.min(rand(3, 6.5), (toLine * Math.abs(b.vy)) / need);
+      b.vz = rand(1.5, 4.5);
     } else {
       b.vx = out * rand(3, 8) - b.vx * 0.1;
       b.vy = (b.y > gk.y ? 1 : -1) * rand(4, 10);
@@ -1205,6 +1532,8 @@ export class Match {
       audio.boom(1);
       b.special = null;
       this.banner = { text: '슈퍼 세이브!!', sub: `${gk.def.name}이(가) 필살기를 막아냈다!`, color: '#7fe0ff', t: 0, dur: 1.8 };
+      this.fx.hitstop = 0.09;
+      this.buzz(50);
       this.say(`믿을 수 없습니다! ${gk.def.name}, 필살기를 막아냅니다!!`);
       setTimeout(() => {
         if (gk.state === 'dive') {
@@ -1222,6 +1551,8 @@ export class Match {
 
   private checkBallOut() {
     const b = this.ball;
+    // 필살 슛 궤적은 골문 입구에서 끝난다. 날아가는 도중에는 아웃 판정을 미룬다
+    if (b.guide && b.special) return;
     if (b.owner && !b.owner.isGK) {
       // 드리블로 라인 넘기
       if (b.y < -BALL_R || b.y > PITCH_W + BALL_R || b.x < -BALL_R || b.x > PITCH_L + BALL_R) {
@@ -1233,7 +1564,9 @@ export class Match {
     for (const gx of [0, PITCH_L]) {
       const crossed = gx === 0 ? b.x < -BALL_R : b.x > PITCH_L + BALL_R;
       if (!crossed) continue;
-      if (Math.abs(b.y - CY) < GOAL_HALF_W && b.z < GOAL_H) {
+      // 공이 골라인을 넘은 그 지점이 골문 입구였는지로 판정 (옆그물로 들어온 공은 골이 아니다)
+      const mouth = b.lastLine && b.lastLine.gx === gx ? b.lastLine.inMouth : Math.abs(b.y - CY) < GOAL_HALF_W && b.z < GOAL_H;
+      if (mouth) {
         const scoring = this.teams.find((t) => t.oppGoalX === gx)!;
         this.goal(scoring);
         return;
@@ -1261,7 +1594,18 @@ export class Match {
     }
   }
 
+  /** 휘슬이 불리면 와인드업 중이던 킥을 모두 취소 */
+  private cancelKicks() {
+    for (const t of this.teams)
+      for (const p of t.active) {
+        if (!p.kick) continue;
+        p.kick = null;
+        if (p.state === 'kick' || p.state === 'header') p.setState('idle');
+      }
+  }
+
   private ballOut(kind: SetPieceKind, side: 0 | 1, x: number, y: number, text: string) {
+    this.cancelKicks();
     if (this.ball.shot && kind !== 'throw') {
       audio.ooh();
       this.say(pick(COMMENTARY.miss).replace('{p}', this.ball.shot.by.def.name));
@@ -1280,6 +1624,7 @@ export class Match {
 
   foul(offender: Player, victim: Player, behind: boolean) {
     if (this.phase !== 'play') return;
+    this.cancelKicks();
     const team = offender.team;
     team.stats.fouls++;
     audio.whistle(1);
@@ -1330,16 +1675,24 @@ export class Match {
     const conceding = this.opp(scoring);
     const toucher = b.lastTouch;
     const ownGoal = toucher && toucher.team === conceding && !(b.shot && b.shot.by.team === scoring);
-    const scorer = ownGoal ? toucher! : b.shot?.by.team === scoring ? b.shot.by : toucher && toucher.team === scoring ? toucher : scoring.players[10];
+    let scorer = ownGoal ? toucher! : b.shot?.by.team === scoring ? b.shot.by : toucher && toucher.team === scoring ? toucher : scoring.active.find((p) => !p.isGK) ?? scoring.players[0];
+    let ownGoalFinal = ownGoal;
+    // 키퍼가 손끝으로 건드린 유효 슈팅은 슈터의 골로 인정
+    const ls = this.lastShot;
+    if (ownGoal && toucher && toucher.isGK && ls && ls.by.team === scoring && this.clock - ls.t < 2.5) {
+      scorer = ls.by;
+      ownGoalFinal = false;
+    }
     const special = !!(b.shot && b.shot.special);
     scoring.goals++;
-    if (!ownGoal) scorer.st.goals++;
+    if (!ownGoalFinal) scorer.st.goals++;
     conceding.gk.st.conceded++;
     const lp = this.lastPasser[scoring.side];
-    if (!ownGoal && lp && lp !== scorer && this.clock - this.lastPassT[scoring.side] < 10) lp.st.assists++;
+    if (!ownGoalFinal && lp && lp !== scorer && this.clock - this.lastPassT[scoring.side] < 10) lp.st.assists++;
+    this.cancelKicks();
     const ev: GoalEvent = {
       side: scoring.side,
-      scorer: ownGoal ? `${scorer.def.name} (자책)` : scorer.def.name,
+      scorer: ownGoalFinal ? `${scorer.def.name} (자책)` : scorer.def.name,
       minute: Math.max(1, this.minute),
       special,
       penalty: this.setPieceKindLast === 'penalty' && this.clock - this.setPieceTakenAt < 3,
@@ -1358,6 +1711,8 @@ export class Match {
     audio.crowd(1);
     this.fx.slow = special ? 1.2 : 0.8;
     this.fx.slowScale = 0.3;
+    this.fx.hitstop = special ? 0.08 : 0.05;
+    this.buzz(special ? 80 : 45);
     this.fx.shake = special ? 1.2 : 0.5;
     this.fx.flash = special ? 0.9 : 0.4;
     this.fx.flashColor = special ? SPECIAL_COLORS[b.special ?? 'fire'][1] : '#ffffff';
@@ -1377,7 +1732,7 @@ export class Match {
       t: 0,
       dur: 3.2,
     };
-    this.say(ownGoal ? pick(COMMENTARY.ownGoal).replace('{p}', scorer.def.name) : pick(special ? COMMENTARY.specialGoal : COMMENTARY.goal).replace('{p}', scorer.def.name));
+    this.say(ownGoalFinal ? pick(COMMENTARY.ownGoal).replace('{p}', scorer.def.name) : pick(special ? COMMENTARY.specialGoal : COMMENTARY.goal).replace('{p}', scorer.def.name));
     // 세리머니
     scorer.setState('celebrate', 99);
     scorer.celebrateKind = Math.floor(rand(0, 3));
@@ -1523,7 +1878,8 @@ export class Match {
     b.place(CX, CY);
     b.owner = null;
     b.lastTouch = null;
-    const taker = this.teams[side].players.filter((p) => p.role === 'FW' && !p.sentOff)[0] ?? this.teams[side].players[10];
+    const pool = this.teams[side].active.filter((p) => !p.isGK);
+    const taker = pool.find((p) => p.role === 'FW') ?? pool.slice().sort((a, c) => c.slot.u - a.slot.u)[0];
     this.setPiece = { kind: 'kickoff', side, taker, x: CX, y: CY, t: 0, spots: new Map(), cpuDelay: rand(0.8, 1.4) };
     for (const t of this.teams) {
       for (const p of t.active) {
@@ -1571,6 +1927,7 @@ export class Match {
     this.banner = { text: '킥오프', sub: `${this.teams[this.setPiece!.side].def.name} 공격`, color: '#ffffff', t: 0, dur: 1.2 };
     audio.whistle(1);
     this.input.clearEdges();
+    this.input.consumeHeld();
   }
 
   setupSetPiece(kind: SetPieceKind, side: 0 | 1, x: number, y: number) {
@@ -1724,6 +2081,7 @@ export class Match {
       this.banner = { text: '페널티킥', sub: `키커: ${taker.def.name}`, color: '#ff4d6d', t: 0, dur: 1.5 };
     }
     this.input.clearEdges();
+    this.input.consumeHeld();
   }
 
   setPieceSpot(p: Player) {
@@ -1759,6 +2117,13 @@ export class Match {
       this.phaseT = 0;
       this.setPieceKindLast = sp.kind;
       this.setPieceTakenAt = this.clock;
+      if (sp.kind === 'penalty') this.extraT = 0;
+      // 골킥을 찬 뒤에는 조종을 필드 선수에게 넘긴다
+      const t = this.teams[sp.side];
+      if (t.human && t.controlled?.isGK) {
+        const cand = t.active.filter((q) => !q.isGK).sort((a, c) => len(a.x - b.x, a.y - b.y) - len(c.x - b.x, c.y - b.y))[0];
+        if (cand) switchTo(this, t, cand);
+      }
       if (sp.kind === 'throw') {
         // 스로인은 손으로: 높이 보정, 라인 안쪽에서 시작
         b.y = clamp(b.y, 0.3, PITCH_W - 0.3);
@@ -1774,7 +2139,12 @@ export class Match {
       return;
     }
     const team = this.teams[sp.side];
-    if (team.human && taker.human) return; // 사람 입력 대기 (control.ts)
+    if (team.human && taker.human) {
+      // 사람 입력 대기 (control.ts). 한참 아무것도 안 하면 대신 처리 (페널티킥 제외)
+      sp.idleT = (sp.idleT ?? 0) + dt;
+      if (sp.idleT > 9 && !this.charge && sp.kind !== 'penalty') this.cpuSetPiece(sp);
+      return;
+    }
     sp.cpuDelay -= dt;
     if (sp.cpuDelay > 0 || sp.t < 0.6) return;
     this.cpuSetPiece(sp);
@@ -1860,6 +2230,8 @@ export class Match {
     }
     if (this.phase !== 'play') return;
     this.extraT += dt;
+    // 추가시간에 얻은 PK는 결과가 나올 때까지 기다린다
+    if (this.setPieceKindLast === 'penalty' && this.clock - this.setPieceTakenAt < 3 && (b.shot || b.z > 0.05)) return;
     const danger = b.shot || Math.min(b.x, PITCH_L - b.x) < 22;
     if (!danger || this.extraT > 8) this.endHalf();
   }
@@ -1876,17 +2248,20 @@ export class Match {
     if (this.half === 1) {
       this.phase = 'halftime';
       this.banner = { text: '전반 종료', sub: `${this.teams[0].def.short} ${this.teams[0].goals} - ${this.teams[1].goals} ${this.teams[1].def.short}`, color: '#ffffff', t: 0, dur: 2.5 };
-      setTimeout(() => this.cb.onHalfTime?.(), 1600);
+      this.whistleCb = { t: 1.6, fn: () => this.cb.onHalfTime?.() };
     } else {
       this.phase = 'fulltime';
       this.banner = { text: '경기 종료', sub: `${this.teams[0].def.short} ${this.teams[0].goals} - ${this.teams[1].goals} ${this.teams[1].def.short}`, color: '#ffffff', t: 0, dur: 2.5 };
-      setTimeout(() => this.cb.onFullTime?.(), 1800);
+      this.whistleCb = { t: 1.8, fn: () => this.cb.onFullTime?.() };
     }
   }
 
   startSecondHalf() {
     this.half = 2;
     this.clock = 0;
+    this.lastPasser = [null, null];
+    this.lastPassT = [-99, -99];
+    this.lastShot = null;
     for (const t of this.teams) {
       t.dir = t.dir > 0 ? -1 : 1;
       for (const p of t.players) p.stamina = Math.min(1, p.stamina + 0.35);
@@ -1935,7 +2310,7 @@ export class Match {
     team.gauge = clamp(team.gauge + amount * mul, 0, 100);
     if (before < 100 && team.gauge >= 100 && team.human) {
       audio.select();
-      this.banner = { text: '필살기 준비 완료!', sub: `[Space] ${team.def.special.name}`, color: SPECIAL_COLORS[team.def.special.type][1], t: 0, dur: 1.4 };
+      this.banner = { text: '필살기 준비 완료!', sub: `${this.touchUI ? '필살 버튼' : '[Space]'} ${team.def.special.name}`, color: SPECIAL_COLORS[team.def.special.type][1], t: 0, dur: 1.4 };
     }
   }
 
@@ -1944,6 +2319,7 @@ export class Match {
     f.shake = Math.max(0, f.shake - dt * 2.2);
     f.flash = Math.max(0, f.flash - dt * 2.5);
     f.fade = Math.max(0, f.fade - dt * 2.5);
+    f.punch = Math.max(0, f.punch - dt);
     this.commentary.t += dt;
     if (this.banner) {
       this.banner.t += dt;
@@ -1951,7 +2327,9 @@ export class Match {
     }
     const targetLB = this.phase === 'cutin' || this.phase === 'replay' ? 1 : 0;
     f.letterbox += (targetLB - f.letterbox) * Math.min(1, dt * 6);
-    f.darken += ((this.phase === 'cutin' ? 0.55 : 0) - f.darken) * Math.min(1, dt * 8);
+    const c = this.cutin;
+    const darkT = this.phase === 'cutin' && c ? (c.t < c.dur * 0.58 ? 0.55 : 0.12) : 0;
+    f.darken += (darkT - f.darken) * Math.min(1, dt * 8);
   }
 
   // ───────────────────────────── 결과 ─────────────────────────────

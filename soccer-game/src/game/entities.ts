@@ -94,12 +94,30 @@ export class Ball {
     this.special = null;
     this.inNet = false;
     this.heldByKeeper = false;
+    this.lastLine = null;
+  }
+
+  /** 마지막으로 골라인을 넘은 순간: 어느 골라인이었고 골문 입구(포스트 사이·크로스바 아래)였는가 */
+  lastLine: { gx: number; inMouth: boolean } | null = null;
+
+  /** 이전 위치→현재 위치 사이에서 골라인 통과를 보간해 기록 */
+  private trackLine(px: number, py: number, pz: number) {
+    for (const gx of [0, PITCH_L]) {
+      if ((px - gx) * (this.x - gx) > 0 || px === this.x) continue;
+      const f = (gx - px) / (this.x - px);
+      const yc = py + (this.y - py) * f;
+      const zc = pz + (this.z - pz) * f;
+      this.lastLine = { gx, inMouth: Math.abs(yc - CY) < GOAL_HALF_W && zc < GOAL_H };
+    }
   }
 
   /** 자유 상태의 공 물리 */
   step(dt: number) {
     this.hitPost = false;
     this.hitNet = false;
+    const px = this.x;
+    const py = this.y;
+    const pz = this.z;
     if (this.guide) {
       const g = this.guide;
       g.t += dt;
@@ -114,9 +132,22 @@ export class Ball {
       this.rot += (this.speed * dt) / BALL_R;
       if (k >= 1) this.guide = null;
       this.collideFrame();
+      this.trackLine(px, py, pz);
       return;
     }
+    // 빠른 공은 잘게 나눠 계산해 골대·크로스바를 뚫고 지나가지 않게
+    const sp3 = Math.sqrt(this.vx * this.vx + this.vy * this.vy + this.vz * this.vz);
+    const n = Math.min(6, Math.max(1, Math.ceil((sp3 * dt) / 0.12)));
+    for (let i = 0; i < n; i++) {
+      const qx = this.x;
+      const qy = this.y;
+      const qz = this.z;
+      this.physStep(dt / n);
+      this.trackLine(qx, qy, qz);
+    }
+  }
 
+  private physStep(dt: number) {
     const sp = this.speed;
     const airborne = this.z > 0.02 || this.vz > 0.5;
     if (airborne) {
@@ -320,9 +351,11 @@ export class Player {
   /** 사람이 조작 중 */
   human = false;
   /** 원터치를 위한 예약 입력 */
-  queued: { kind: PendingKick['kind']; power: number; t: number } | null = null;
+  queued: { kind: PendingKick['kind']; power: number; t: number; finesse?: boolean; chip?: boolean } | null = null;
   /** 필살 오라 */
   aura = 0;
+  /** 골키퍼: 막기로 판정된 슛 (그 슛에만 세이브 동작을 적용) */
+  saveShot: ShotInfo | null = null;
   celebrateKind = 0;
 
   constructor(team: TeamState, idx: number, def: PlayerDef, slot: Slot) {
@@ -364,6 +397,8 @@ export class Player {
     this.state = s;
     this.stateT = 0;
     this.stateDur = dur;
+    // 태클·넘어짐 등으로 킥 동작이 끊기면 대기 중인 킥도 취소 (안 그러면 버튼이 먹통이 된다)
+    if (s !== 'kick' && s !== 'header') this.kick = null;
   }
 
   /** 사기 반영 (-3..3 → 0.9..1.1) */
